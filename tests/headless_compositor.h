@@ -34,6 +34,8 @@ public:
     HeadlessCompositor& operator=(const HeadlessCompositor&) = delete;
 
     int create_client_fd();
+    const char* add_socket_auto();
+    int add_socket(const char* name);
     void start();
     void stop();
     void flush();

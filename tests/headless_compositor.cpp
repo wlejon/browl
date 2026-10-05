@@ -172,6 +172,14 @@ int HeadlessCompositor::create_client_fd() {
     return sv[1];
 }
 
+const char* HeadlessCompositor::add_socket_auto() {
+    return wl_display_add_socket_auto(display_);
+}
+
+int HeadlessCompositor::add_socket(const char* name) {
+    return wl_display_add_socket(display_, name);
+}
+
 void HeadlessCompositor::start() {
     running_ = true;
     worker_ = std::thread([this]() {

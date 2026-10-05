@@ -308,6 +308,9 @@ static void bind_foreign_toplevel_manager(struct wl_client* client, void* data, 
         wl_resource_create(client, &zwlr_foreign_toplevel_manager_v1_interface, version, id);
     wl_resource_set_implementation(res, &toplevel_manager_impl, data, nullptr);
     comp->toplevel_manager_resource_ = res;
+    if (!comp->client_) {
+        comp->client_ = client;
+    }
 }
 
 }  // namespace
@@ -391,7 +394,11 @@ CompositorToplevelState* HeadlessCompositor::create_foreign_toplevel(const std::
                                                                    const std::string& app_id,
                                                                    uint32_t state) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!toplevel_manager_resource_ || !client_) {
+    struct wl_client* target_client = client_;
+    if (!target_client && toplevel_manager_resource_) {
+        target_client = wl_resource_get_client(toplevel_manager_resource_);
+    }
+    if (!toplevel_manager_resource_ || !target_client) {
         return nullptr;
     }
 
@@ -401,7 +408,7 @@ CompositorToplevelState* HeadlessCompositor::create_foreign_toplevel(const std::
     top->state = state;
 
     struct wl_resource* handle_res =
-        wl_resource_create(client_, &zwlr_foreign_toplevel_handle_v1_interface,
+        wl_resource_create(target_client, &zwlr_foreign_toplevel_handle_v1_interface,
                            wl_resource_get_version(toplevel_manager_resource_), 0);
     wl_resource_set_implementation(handle_res, &toplevel_handle_impl, top.get(), nullptr);
     top->resource = handle_res;
