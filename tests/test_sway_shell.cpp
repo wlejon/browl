@@ -28,7 +28,7 @@ const LayerConfigureEvent* first_configure(Display& d, EventLog& log, LayerSurfa
     auto match = [id](const LayerConfigureEvent& e) { return e.surface_id == id; };
     swaytest::pump(d, [&] {
         log.take(d);
-        return log.find<LayerConfigureEvent>(match) != nullptr && layer.snapshot().configured;
+        return log.find<LayerConfigureEvent>(match) != nullptr && layer.snapshot().configured_serial != 0;
     });
     return log.find_last<LayerConfigureEvent>(match);
 }
