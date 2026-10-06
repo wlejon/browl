@@ -11,21 +11,29 @@ Objects are RAII wrappers; what the compositor says arrives as immutable
 snapshots and as events in a thread-safe queue you drain when you like.
 It needs nothing but `libwayland-client`.
 
-Part of the **[bro](https://github.com/wlejon/bro)** ecosystem, built in the
-mould of [brodisplays](https://github.com/wlejon/brodisplays) and
-[brocompositor](https://github.com/wlejon/brocompositor).
+## Where it sits
+
+Part of the **[bro](https://github.com/wlejon/bro)** desktop ecosystem (see the
+[ecosystem architecture](https://github.com/wlejon/bro/blob/main/docs/ecosystem.md)).
+Within the desktop stack, `browl` sits alongside
+[brodisplays](https://github.com/wlejon/brodisplays) and
+[brocompositor](https://github.com/wlejon/brocompositor) as the client-side
+implementation of Wayland desktop shell protocols, allowing panels, docks,
+launchers, lock screens, and system bars to negotiate surface roles and system
+states with the compositor.
 
 ## Platform support
 
-Wayland is a Linux display protocol, so browl does its job **on Linux
+Wayland is a Linux display protocol, so `browl` does its real work **on Linux
 only**, against a compositor that offers the protocols (wlroots-based ones
 such as sway offer all of them; others offer a subset, which `Display`'s
 `has_*()` queries report).
 
-On Windows and macOS the library configures and builds with no Wayland
-dependencies, the whole API compiles and links, and `Display::connect()`
-fails with the reason (`browl::unavailable_reason()`), so nothing is ever
-handed out.
+On Windows and macOS, the library configures and builds with clean stubs without
+any Wayland dependencies: the entire API compiles and links unconditionally, and
+`Display::connect()` fails with an explanatory error (`browl::unavailable_reason()`),
+so downstream callers can link `browl` unconditionally without handing out broken
+objects.
 
 | Protocol | Interface | Bound up to |
 | :--- | :--- | :--- |
@@ -38,25 +46,79 @@ handed out.
 | Idle notify | `ext_idle_notifier_v1` | v1 |
 | Core | `wl_compositor`, `wl_shm`, `wl_output`, `wl_seat` | v4, v1, v4, v7 |
 
-## Build
+## Building
+
+### Prerequisites
+
+- **CMake 3.24+** and a **C++20** compiler (GCC 12+, Clang 15+, Apple Clang, MSVC 2022+).
+- **Linux**: `libwayland-client` and `wayland-scanner` (Debian/Ubuntu: `libwayland-dev libwayland-bin`; Arch: `wayland`).
+  The test suite also requires `libwayland-server` (part of `libwayland-dev`) and, for real-compositor integration tests, `sway`.
+- **Windows / macOS**: No external Wayland libraries required.
+
+### Standalone build
 
 ```bash
-cmake -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release   # Linux
+# Linux
+cmake -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build-release
 ctest --test-dir build-release --output-on-failure
 
-cmake -B build                                               # Windows (VS)
+# Windows (MSVC) / macOS
+cmake -B build
 cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
 ```
 
-Linux needs `libwayland-client` and `wayland-scanner` (Debian/Ubuntu:
-`libwayland-dev libwayland-bin`); the tests also need `libwayland-server`
-(same package) and, for the real-compositor tests, `sway`. The protocol XML
-is in `protocols/`. Options: `BROWL_BUILD_TESTS` (on when top level),
-`BROWL_COVERAGE` (gcov instrumentation, GCC/Clang). Consumers use the
-`browl::browl` target via `add_subdirectory`.
+CMake options:
+- `BROWL_BUILD_TESTS`: Build tests (default `ON` when top-level, `OFF` when included via `add_subdirectory`).
+- `BROWL_COVERAGE`: Instrument the build for gcov coverage (GCC/Clang).
+- `BROWL_ENABLE_API`: Build the standalone Bronze JavaScript API (default `ON`; searches `../bronze` or `-DBRONZE_DIR=<path>`).
 
-## API
+### Consuming browl
+
+Downstream projects consume the `browl::browl` CMake target. Following the
+ecosystem dependency convention, consumers can resolve `browl` either as a
+sibling directory or as a vendored submodule:
+
+#### Sibling layout
+
+When `browl` is checked out beside your project at `../browl`:
+
+```cmake
+if(NOT TARGET browl::browl)
+    if(DEFINED BROWL_DIR AND EXISTS "${BROWL_DIR}/CMakeLists.txt")
+        # Explicit BROWL_DIR override supplied via -DBROWL_DIR=<path>
+    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../browl/CMakeLists.txt")
+        set(BROWL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../browl" CACHE PATH "browl source tree")
+    elseif(EXISTS "${CMAKE_SOURCE_DIR}/../browl/CMakeLists.txt")
+        set(BROWL_DIR "${CMAKE_SOURCE_DIR}/../browl" CACHE PATH "browl source tree")
+    endif()
+
+    if(NOT BROWL_DIR OR NOT EXISTS "${BROWL_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR "browl not found beside this repository or at BROWL_DIR")
+    endif()
+
+    add_subdirectory("${BROWL_DIR}" "${CMAKE_BINARY_DIR}/browl-build" EXCLUDE_FROM_ALL)
+endif()
+```
+
+#### Submodule layout
+
+When `browl` is vendored as a git submodule under `third_party/browl`:
+
+```cmake
+if(NOT TARGET browl::browl)
+    add_subdirectory(third_party/browl EXCLUDE_FROM_ALL)
+endif()
+```
+
+#### Linking
+
+```cmake
+target_link_libraries(your_target PRIVATE browl::browl)
+```
+
+## API overview
 
 ```cpp
 #include <browl/browl.h>
@@ -91,7 +153,7 @@ for (auto& ev : display->events().drain()) {
 }
 ```
 
-| Header | What |
+| Header | Contents |
 | :--- | :--- |
 | `display.h` | `Display`: connect, dispatch, capability queries, factories, outputs and seats |
 | `layer_surface.h` | `LayerSurface`: layer, anchors, margins, exclusive zone, keyboard interactivity, configure/ack, popups |
@@ -102,49 +164,49 @@ for (auto& ev : display->events().drain()) {
 | `idle_inhibit.h`, `idle_notify.h` | `IdleInhibitor`, `IdleNotification` (idled / resumed) |
 | `shm_pool.h` | `ShmPool`, `ShmBuffer`: memfd-backed `wl_shm` pools that grow without invalidating existing buffers |
 | `output.h`, `seat.h` | `Output`, `Seat`: snapshots of what the compositor announces |
-| `events.h`, `event_queue.h` | snapshot types, the `ShellEvent` variant, `EventQueue` |
+| `events.h`, `event_queue.h` | Snapshot types, the `ShellEvent` variant, `EventQueue` |
+| `browl.h` | Master umbrella header |
 
 Session lock semantics worth knowing: only `unlock_and_destroy()` unlocks.
 Destroying a `SessionLock` that is locked leaves the session locked (the
-compositor shows a solid colour once the client is gone), as the protocol
+compositor displays a solid colour once the client is gone), as the protocol
 intends for a crashed or misbehaving locker.
 
 ## Tests
 
-`tests/check.h` holds the checks (real in every configuration, no
-`assert()`). A test that cannot run exits 77 with the reason and ctest
-reports it skipped, never passed.
+`tests/check.h` holds the test assertions (active in every configuration, no
+`assert()`). Tests that cannot run in the current environment exit with code 77
+and ctest reports them as skipped, never passed.
 
-| Test | Where | Against | Oracle |
+| Test | Platform | Target / Environment | Oracle |
 | :--- | :--- | :--- | :--- |
-| `test_event_queue` | everywhere | — | ordering, timed waits, wake hook, four producers against a draining consumer |
+| `test_event_queue` | everywhere | — | Ordering, timed waits, wake hook, four producers against a draining consumer |
 | `test_unavailable` | Windows, macOS | — | `connect()` fails with `unavailable_reason()` |
-| `test_display`, `test_layer_surface`, `test_popup`, `test_foreign_toplevel`, `test_session_lock`, `test_idle`, `test_screencopy`, `test_shm_pool` | Linux | `HeadlessCompositor` (test double) | what browl puts on the wire and how it turns scripted events into snapshots and queue entries; for `test_shm_pool`, the pool's own memory |
-| `test_sway_shell` | Linux with sway | headless sway | sizes sway configures (output size; the space an exclusive zone leaves), where it places a popup and slides it back on screen, and the composited pixels read back with screencopy (whole output and a region) |
-| `test_sway_toplevel` | Linux with sway | headless sway + a second client's window | the window as sway reports it (title, app id, output, activation, retitle); fullscreen and close requested through browl arriving at the window |
-| `test_sway_lock_idle` | Linux with sway | headless sway | idled after the timeout and not while a visible surface inhibits; the lock surface is what the output shows; a second lock is refused while one holds and accepted after unlock; dropping a locked lock does not reveal the desktop |
+| `test_display`, `test_layer_surface`, `test_popup`, `test_foreign_toplevel`, `test_session_lock`, `test_idle`, `test_screencopy`, `test_shm_pool` | Linux | `HeadlessCompositor` (test double) | What browl puts on the wire and how it turns scripted events into snapshots and queue entries; for `test_shm_pool`, the pool's own memory |
+| `test_sway_shell` | Linux with sway | headless sway | Sizes sway configures (output size; the space an exclusive zone leaves), where it places a popup and slides it back on screen, and the composited pixels read back with screencopy (whole output and a region) |
+| `test_sway_toplevel` | Linux with sway | headless sway + a second client's window | The window as sway reports it (title, app id, output, activation, retitle); fullscreen and close requested through browl arriving at the window |
+| `test_sway_lock_idle` | Linux with sway | headless sway | Idled after the timeout and not while a visible surface inhibits; the lock surface is what the output shows; a second lock is refused while one holds and accepted after unlock; dropping a locked lock does not reveal the desktop |
+| `browl_test_api` | Linux (when API enabled) | `HeadlessCompositor` | Bronze JavaScript bindings (`browl_api`) and garbage collector stress testing |
 
-`HeadlessCompositor` (`tests/headless_compositor*.cpp`) is a hand-written
-wayland-server that advertises every global browl binds and sends exactly
-the events a test scripts. It checks browl's marshalling and event handling
-and covers events a real compositor cannot be made to send on demand
-(`closed`, `popup_done`, `finished`, `resumed`, a failed capture), but it
-does not validate requests the way a compositor does. The `test_sway_*`
-tests are the real check: `tests/run-headless-sway.sh` starts a private
-headless sway per test (its own `XDG_RUNTIME_DIR`, the pixman renderer, no
-input devices) and hands it to the test as `BROWL_TEST_WAYLAND_DISPLAY`;
-the tests never touch the desktop's `$WAYLAND_DISPLAY`. Without sway
-installed they skip.
+### Test fixtures & CI skipping
 
-Not exercised against a real compositor: the `resumed` idle event (sway
-has no input devices to wake it here), popup grabs (need input),
-maximize/minimize through foreign toplevel (sway does not implement them),
-and keyboard interactivity.
-
-CI (`.github/workflows/ci.yml`) runs the Linux tests, sway included, on
-Ubuntu 24.04 (sway 1.9, wlroots 0.17); they are also verified on Arch with
-sway 1.12. Each job's log ends with the tests and checks it skipped, and why
-(`.github/ci/ctest.sh`).
+- **`HeadlessCompositor`** (`tests/headless_compositor*.cpp`): A custom, hand-written
+  in-process `wayland-server` that advertises every global browl binds and sends
+  exact scripted protocol events. It checks browl's wire marshalling and event
+  handling and exercises events that a real compositor cannot be made to send on demand
+  (`closed`, `popup_done`, `finished`, `resumed`, failed capture).
+- **Headless sway tests**: `tests/run-headless-sway.sh` launches a private,
+  headless sway instance per test (with its own isolated `XDG_RUNTIME_DIR`, the
+  pixman software renderer, and no physical input devices) passed via
+  `BROWL_TEST_WAYLAND_DISPLAY`. Tests never touch the desktop's `$WAYLAND_DISPLAY`.
+  When sway or `wayland-server` is absent, these tests cleanly exit 77 (skipped).
+- **Not exercised against a real compositor**: The `resumed` idle event (sway
+  has no simulated input devices in this configuration), popup grabs (requiring input),
+  maximize/minimize through foreign toplevel (not implemented by sway), and keyboard
+  interactivity.
+- **CI**: Runs the Linux test suite (including sway) on Ubuntu 24.04 (sway 1.9,
+  wlroots 0.17). Verified also on Arch Linux with sway 1.12. Each job's log ends
+  with the skipped tests and the exact reasons reported (`.github/ci/ctest.sh`).
 
 ## License
 
