@@ -1,0 +1,73 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+# Everything browl reads comes from the compositor: strings (titles, app ids,
+# output names), arrays (toplevel states), sizes and strides it allocates and
+# indexes shared memory with. Out-of-bounds access and integer overflow in
+# that size arithmetic are the realistic bugs, which is what the C++ queries
+# look for.
+#
+# Two analyses: Linux (the Wayland client) and Windows (the unavailable
+# stubs, so the portable build is analysed too). No siblings to pre-build.
+# The wayland-scanner output is generated before `init`, so it is not
+# extracted (for a compiled language CodeQL analyses what it watches being
+# compiled).
+jobs:
+  analyze:
+    name: Analyze C++ (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux,   os: ubuntu-24.04 }
+          - { name: windows, os: windows-2022 }
+
+    steps:
+      - name: Install packages (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config libwayland-dev libwayland-bin
+
+      - uses: actions/checkout@v7
+
+      - name: Configure and pre-build generated code (outside the traced build)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cmake -B build
+          else
+            cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+            cmake --build build --target browl_protocols
+          fi
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: c-cpp
+          build-mode: manual
+          queries: security-extended
+
+      - name: Build (traced)
+        run: cmake --build build --config Debug --parallel 4
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:c-cpp/os:${{ matrix.name }}

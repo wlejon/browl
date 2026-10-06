@@ -1,0 +1,137 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# browl has no siblings: no submodules, no ../ checkouts, and therefore no
+# submodule job. libwayland and sway come from the OS.
+#
+# Where each part is built and tested:
+#
+#   EventQueue (test_event_queue)               every job
+#   unavailable reporting (test_unavailable)    windows-msvc (Release, Debug), macos-arm64
+#   the Wayland client                          linux-*, coverage
+#
+# The Linux jobs run two kinds of test: against HeadlessCompositor, an
+# in-process test double that scripts the compositor's events, and the
+# test_sway_* tests against a real compositor, a private headless sway that
+# tests/run-headless-sway.sh starts per test (pixman renderer, no input
+# devices, its own XDG_RUNTIME_DIR). sway is installed here so those run
+# rather than skip.
+#
+# Every test that cannot run exits 77 and ctest lists it as skipped, never as
+# passed. Every test step ends with the skipped tests and the skipped checks
+# inside tests, each with its own reason (.github/ci/ctest.sh): that is what a
+# job really covered.
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-gcc,          os: ubuntu-24.04, cc: gcc,   cxx: g++,     config: Release }
+          - { name: linux-clang,        os: ubuntu-24.04, cc: clang, cxx: clang++, config: Release }
+          - { name: windows-msvc,       os: windows-2022,                          config: Release }
+          # Debug CRT: iterator debugging.
+          - { name: windows-msvc-debug, os: windows-2022,                          config: Debug }
+          - { name: macos-arm64,        os: macos-15,                              config: Release }
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install packages (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config \
+            libwayland-dev libwayland-bin sway
+
+      - name: Install packages (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Configure
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cmake -B build
+          else
+            cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.config }}
+          fi
+
+      - name: Build
+        run: cmake --build build --config ${{ matrix.config }} --parallel 4
+
+      - name: Test
+        shell: bash
+        run: .github/ci/ctest.sh --test-dir build -C ${{ matrix.config }}
+
+  # Linux, Debug (-O0), sway included. The Windows and macOS builds compile
+  # only the inert unavailable stubs, which are not measured.
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install packages
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config \
+            libwayland-dev libwayland-bin sway gcovr
+
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBROWL_COVERAGE=ON
+
+      - name: Build
+        run: cmake --build build --parallel 4
+
+      - name: Test
+        run: .github/ci/ctest.sh --test-dir build
+
+      # Scoped to the library's own src/ and include/: the tests are not the
+      # subject, and the wayland-scanner output is generated. pipefail is on,
+      # so a gcovr crash fails the job.
+      - name: Report
+        if: always()
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p coverage-html
+          gcovr --root . \
+            --filter 'src/' --filter 'include/browl/' \
+            --exclude 'src/unavailable/' \
+            --exclude-unreachable-branches \
+            --print-summary \
+            --html-details coverage-html/index.html \
+            | tee coverage-summary.txt
+          test -s coverage-html/index.html
+          {
+            echo '## Coverage — `src/` + `include/browl/`'
+            echo
+            echo 'Linux, against the in-process test double and a headless sway.'
+            echo
+            echo '```'
+            cat coverage-summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-html
+          path: coverage-html/
+          retention-days: 14
