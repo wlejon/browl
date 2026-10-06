@@ -19,8 +19,9 @@ concurrency:
 # look for.
 #
 # Two analyses: Linux (the Wayland client) and Windows (the unavailable
-# stubs, so the portable build is analysed too). No siblings to pre-build.
-# The wayland-scanner output is generated before `init`, so it is not
+# stubs, so the portable build is analysed too). The only sibling code is
+# bronze/brass for browl_api (analysed by their own workflows), pre-built
+# with the wayland-scanner output before `init`, so neither is
 # extracted (for a compiled language CodeQL analyses what it watches being
 # compiled).
 jobs:
@@ -46,15 +47,21 @@ jobs:
           sudo apt-get install -y --no-install-recommends ninja-build pkg-config libwayland-dev libwayland-bin
 
       - uses: actions/checkout@v7
+        with:
+          path: browl
 
-      - name: Configure and pre-build generated code (outside the traced build)
+      - uses: wlejon/bronze/.github/actions/checkout-toolchain@main
+
+      - name: Configure and pre-build generated code + bronze (outside the traced build)
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
-            cmake -B build
+            cmake -S browl -B build
           else
-            cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+            cmake -S browl -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
             cmake --build build --target browl_protocols
+            # browl_api (Linux only: it drives the Wayland client) binds bronze.
+            cmake --build build --parallel 4 --target bronze_runtime_shared
           fi
 
       - name: Initialize CodeQL
@@ -62,6 +69,7 @@ jobs:
         with:
           languages: c-cpp
           build-mode: manual
+          source-root: browl
           queries: security-extended
 
       - name: Build (traced)

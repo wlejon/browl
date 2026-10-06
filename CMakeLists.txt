@@ -139,7 +139,17 @@ target_compile_features(browl PUBLIC cxx_std_20)
 browl_warnings(browl)
 
 # --- Standalone Bronze JavaScript API ---
-option(BROWL_ENABLE_API "Build Bronze JavaScript API" ON)
+# On by default only when browl is the top-level project. A library that
+# consumes browl then never needs bronze for it; bro forces BROWL_ENABLE_API
+# ON itself when it wants the binding.
+#
+# The binding drives the Wayland client directly, so it exists on Linux only;
+# elsewhere the option is accepted and ignored (bro links browl on Linux only).
+option(BROWL_ENABLE_API "Build Bronze JavaScript API" ${PROJECT_IS_TOP_LEVEL})
+if(BROWL_ENABLE_API AND NOT BROWL_LINUX)
+    message(STATUS "browl: not Linux, no Wayland client to bind; browl_api not built")
+    set(BROWL_ENABLE_API OFF)
+endif()
 if(BROWL_ENABLE_API)
     if(NOT TARGET bronze_runtime_shared)
         set(BRONZE_BUILD_SHARED_RUNTIME ON CACHE BOOL "" FORCE)
