@@ -1,124 +1,92 @@
+// LayerSurface against the in-process test-double compositor
+// (fake_session.h): configure/ack/commit, reconfiguration, and the closed
+// event. What a real compositor makes of the requests is test_sway's part.
 #include "browl/display.h"
 #include "browl/layer_surface.h"
 #include "browl/output.h"
-#include "headless_compositor.h"
-
-#include <cassert>
-#include <iostream>
+#include "fake_session.h"
 
 using namespace browl;
-using namespace browl::test;
+using bstest::find_event;
 
-int main() {
-    std::cout << "Running test_layer_surface..." << std::endl;
+namespace {
 
-    HeadlessCompositor server;
-    server.start();
-
-    int client_fd = server.create_client_fd();
-    assert(client_fd >= 0);
-
-    auto display = Display::connect_to_fd(client_fd);
-    assert(display != nullptr);
+void run() {
+    bstest::FakeSession s;
+    REQUIRE(s.display != nullptr);
+    Display& display = *s.display;
 
     LayerSurfaceConfig config;
     config.name_space = "panel";
     config.layer = Layer::Top;
     config.anchor = Anchor::Top | Anchor::Left | Anchor::Right;
-    config.margins = Margins{0, 0, 0, 0};
     config.size = Size{1920, 48};
     config.exclusive_zone = 48;
-    config.keyboard_interactivity = KeyboardInteractivity::None;
-    config.output = display->default_output().get();
+    config.output = display.default_output().get();
 
-    auto layer = display->create_layer_surface(config);
-    assert(layer != nullptr);
-    assert(layer->wl_surface_ptr() != nullptr);
-    assert(layer->zwlr_layer_surface_ptr() != nullptr);
+    auto layer = display.create_layer_surface(config);
+    REQUIRE(layer != nullptr);
+    CHECK(layer->wl_surface_ptr() != nullptr);
+    CHECK(layer->zwlr_layer_surface_ptr() != nullptr);
+    CHECK(display.roundtrip() >= 0);
+    CHECK(s.server.layer_surface_created());
 
-    display->roundtrip();
-    assert(server.layer_surface_created());
-
-    // Initial snapshot check
     auto snap = layer->snapshot();
-    assert(snap.layer == Layer::Top);
-    assert((snap.anchor & Anchor::Top) == Anchor::Top);
-    assert(snap.exclusive_zone == 48);
-    assert(!snap.closed);
+    CHECK_EQ(snap.id, layer->id());
+    CHECK_EQ(snap.layer, Layer::Top);
+    CHECK_EQ(snap.anchor, Anchor::Top | Anchor::Left | Anchor::Right);
+    CHECK_EQ(snap.exclusive_zone, 48);
+    CHECK(!snap.closed);
 
-    // Compositor configures layer surface
-    server.configure_layer_surface(1920, 48);
-    display->roundtrip();
+    s.server.configure_layer_surface(1920, 48);
+    CHECK(display.roundtrip() >= 0);
+    auto events = display.events().drain();
+    const auto* conf = find_event<LayerConfigureEvent>(
+        events, [&](const LayerConfigureEvent& e) { return e.surface_id == layer->id(); });
+    REQUIRE(conf != nullptr);
+    CHECK_EQ(conf->width, 1920u);
+    CHECK_EQ(conf->height, 48u);
+    CHECK(conf->serial != 0u);
 
-    // Check configure event in queue
-    auto events = display->events().drain();
-    bool found_configure = false;
-    uint32_t configured_serial = 0;
-    for (const auto& ev : events) {
-        if (std::holds_alternative<LayerConfigureEvent>(ev)) {
-            const auto& conf = std::get<LayerConfigureEvent>(ev);
-            if (conf.surface_id == layer->id()) {
-                found_configure = true;
-                configured_serial = conf.serial;
-                assert(conf.width == 1920);
-                assert(conf.height == 48);
-            }
-        }
-    }
-    assert(found_configure);
-
-    // Snapshot reflects configured properties
     snap = layer->snapshot();
-    assert(snap.configured_size.width == 1920);
-    assert(snap.configured_size.height == 48);
-    assert(snap.configured_serial == configured_serial);
+    CHECK_EQ(snap.configured_size.width, 1920);
+    CHECK_EQ(snap.configured_size.height, 48);
+    CHECK_EQ(snap.configured_serial, conf->serial);
 
-    // Ack configure and commit
-    layer->ack_configure(configured_serial);
+    layer->ack_configure(conf->serial);
     layer->commit();
-    display->roundtrip();
+    CHECK(display.roundtrip() >= 0);
+    CHECK_EQ(s.server.last_layer_ack_serial(), conf->serial);
+    CHECK(s.server.layer_surface_committed());
 
-    assert(server.last_layer_ack_serial() == configured_serial);
-    assert(server.layer_surface_committed());
-
-    // Dynamic reconfiguration
     layer->set_size(1920, 60);
     layer->set_anchor(Anchor::Bottom | Anchor::Left | Anchor::Right);
-    layer->set_margin(Margins{5, 5, 5, 5});
+    layer->set_margin(Margins{5, 6, 7, 8});
     layer->set_exclusive_zone(60);
     layer->set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
     layer->set_layer(Layer::Overlay);
     layer->commit();
-    display->roundtrip();
+    CHECK(display.roundtrip() >= 0);
 
     snap = layer->snapshot();
-    assert(snap.layer == Layer::Overlay);
-    assert(snap.exclusive_zone == 60);
-    assert(snap.keyboard_interactivity == KeyboardInteractivity::OnDemand);
-    assert(snap.margins.top == 5);
+    CHECK_EQ(snap.layer, Layer::Overlay);
+    CHECK_EQ(snap.anchor, Anchor::Bottom | Anchor::Left | Anchor::Right);
+    CHECK(snap.margins == (Margins{5, 6, 7, 8}));
+    CHECK_EQ(snap.exclusive_zone, 60);
+    CHECK_EQ(snap.keyboard_interactivity, KeyboardInteractivity::OnDemand);
 
-    // Server closes layer surface
-    server.close_layer_surface();
-    display->roundtrip();
+    s.server.close_layer_surface();
+    CHECK(display.roundtrip() >= 0);
+    CHECK(layer->snapshot().closed);
+    events = display.events().drain();
+    CHECK(find_event<LayerClosedEvent>(events, [&](const LayerClosedEvent& e) {
+              return e.surface_id == layer->id();
+          }) != nullptr);
+}
 
-    snap = layer->snapshot();
-    assert(snap.closed);
+}  // namespace
 
-    events = display->events().drain();
-    bool found_closed = false;
-    for (const auto& ev : events) {
-        if (std::holds_alternative<LayerClosedEvent>(ev)) {
-            if (std::get<LayerClosedEvent>(ev).surface_id == layer->id()) {
-                found_closed = true;
-            }
-        }
-    }
-    assert(found_closed);
-
-    layer.reset();
-    display.reset();
-    server.stop();
-
-    std::cout << "test_layer_surface passed!" << std::endl;
-    return 0;
+int main() {
+    run();
+    return bstest::finish("test_layer_surface");
 }

@@ -43,6 +43,8 @@ public:
 
     // Compositor & display actions
     void send_output_done();
+    // A mode event followed by done, as a compositor sends on a mode change.
+    void send_output_mode(uint32_t flags, int32_t width, int32_t height, int32_t refresh_mhz);
     void send_seat_caps(uint32_t caps, const char* name = "seat0");
 
     // Layer shell actions

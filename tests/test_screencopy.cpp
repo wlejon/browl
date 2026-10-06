@@ -1,128 +1,94 @@
+// ScreenCopyManager and ScreenCopyFrame against the in-process test-double
+// compositor (fake_session.h): buffer negotiation, copy, ready (with the
+// 64-bit timestamp split across two words) and failure. Real pixels are
+// captured in test_sway.
 #include "browl/display.h"
 #include "browl/output.h"
 #include "browl/screencopy.h"
 #include "browl/shm_pool.h"
-#include "headless_compositor.h"
+#include "fake_session.h"
 
-#include <cassert>
-#include <iostream>
+#include <wayland-client.h>
 
 using namespace browl;
-using namespace browl::test;
+using bstest::find_event;
+
+namespace {
+
+void run() {
+    bstest::FakeSession s;
+    REQUIRE(s.display != nullptr);
+    Display& display = *s.display;
+
+    auto mgr = display.screencopy_manager();
+    REQUIRE(mgr != nullptr);
+    CHECK(display.screencopy_manager() == mgr);
+    CHECK(mgr->zwlr_manager_ptr() != nullptr);
+    auto output = display.default_output();
+    REQUIRE(output != nullptr);
+
+    auto frame = mgr->capture_output(*output, true);
+    REQUIRE(frame != nullptr);
+    CHECK(frame->zwlr_frame_ptr() != nullptr);
+    CHECK(!frame->is_ready());
+    CHECK(!frame->is_failed());
+    CHECK(display.roundtrip() >= 0);
+    CHECK(s.server.screencopy_frame_created());
+
+    constexpr uint32_t kFormat = WL_SHM_FORMAT_XRGB8888;
+    constexpr uint32_t kWidth = 1920, kHeight = 1080, kStride = 1920 * 4;
+    s.server.send_screencopy_buffer(kFormat, kWidth, kHeight, kStride);
+    CHECK(display.roundtrip() >= 0);
+    CHECK_EQ(frame->format(), kFormat);
+    CHECK_EQ(frame->width(), kWidth);
+    CHECK_EQ(frame->height(), kHeight);
+    CHECK_EQ(frame->stride(), kStride);
+    auto events = display.events().drain();
+    const auto* buf = find_event<ScreenCopyBufferEvent>(events);
+    REQUIRE(buf != nullptr);
+    CHECK_EQ(buf->format, kFormat);
+    CHECK_EQ(buf->width, kWidth);
+    CHECK_EQ(buf->height, kHeight);
+    CHECK_EQ(buf->stride, kStride);
+
+    auto pool = display.create_shm_pool(size_t(kStride) * kHeight);
+    REQUIRE(pool != nullptr);
+    auto buffer = pool->allocate_buffer(kWidth, kHeight, kStride, kFormat);
+    REQUIRE(buffer != nullptr);
+    frame->copy(buffer->wl_buffer_ptr());
+    CHECK(display.roundtrip() >= 0);
+    CHECK(s.server.screencopy_copy_received());
+
+    s.server.send_screencopy_ready(42, 1000000);
+    CHECK(display.roundtrip() >= 0);
+    CHECK(frame->is_ready());
+    CHECK(!frame->is_failed());
+    const auto snap = frame->snapshot();
+    CHECK_EQ(snap.status, ScreenCopyFrameSnapshot::Status::Ready);
+    CHECK_EQ(snap.tv_sec, uint64_t(42));
+    CHECK_EQ(snap.tv_nsec, 1000000u);
+    events = display.events().drain();
+    const auto* ready = find_event<ScreenCopyReadyEvent>(events);
+    REQUIRE(ready != nullptr);
+    CHECK_EQ(ready->frame.tv_sec, uint64_t(42));
+    CHECK_EQ(ready->frame.width, kWidth);
+
+    auto frame2 = mgr->capture_output_region(*output, Rect{10, 20, 30, 40}, false);
+    REQUIRE(frame2 != nullptr);
+    CHECK(display.roundtrip() >= 0);
+    s.server.send_screencopy_failed();
+    CHECK(display.roundtrip() >= 0);
+    CHECK(frame2->is_failed());
+    CHECK(!frame2->is_ready());
+    events = display.events().drain();
+    const auto* failed = find_event<ScreenCopyFailedEvent>(events);
+    REQUIRE(failed != nullptr);
+    CHECK(!failed->reason.empty());
+}
+
+}  // namespace
 
 int main() {
-    std::cout << "Running test_screencopy..." << std::endl;
-
-    HeadlessCompositor server;
-    server.start();
-
-    int client_fd = server.create_client_fd();
-    assert(client_fd >= 0);
-
-    auto display = Display::connect_to_fd(client_fd);
-    assert(display != nullptr);
-
-    auto mgr = display->screencopy_manager();
-    assert(mgr != nullptr);
-    assert(mgr->zwlr_manager_ptr() != nullptr);
-
-    auto output = display->default_output();
-    assert(output != nullptr);
-
-    // 1. Successful capture flow
-    auto frame = mgr->capture_output(*output, true);
-    assert(frame != nullptr);
-    assert(frame->zwlr_frame_ptr() != nullptr);
-
-    display->roundtrip();
-    assert(server.screencopy_frame_created());
-
-    // Compositor advertises buffer format and size
-    constexpr uint32_t kFormat = 1; // WL_SHM_FORMAT_XRGB8888
-    constexpr uint32_t kWidth = 1920;
-    constexpr uint32_t kHeight = 1080;
-    constexpr uint32_t kStride = 1920 * 4;
-
-    server.send_screencopy_buffer(kFormat, kWidth, kHeight, kStride);
-    display->roundtrip();
-
-    assert(frame->format() == kFormat);
-    assert(frame->width() == kWidth);
-    assert(frame->height() == kHeight);
-    assert(frame->stride() == kStride);
-
-    auto events = display->events().drain();
-    bool found_buffer = false;
-    for (const auto& ev : events) {
-        if (std::holds_alternative<ScreenCopyBufferEvent>(ev)) {
-            const auto& buf = std::get<ScreenCopyBufferEvent>(ev);
-            if (buf.format == kFormat && buf.width == kWidth && buf.height == kHeight) {
-                found_buffer = true;
-            }
-        }
-    }
-    assert(found_buffer);
-
-    // Allocate shm buffer and copy
-    auto pool = display->create_shm_pool(kStride * kHeight);
-    assert(pool != nullptr);
-    auto buffer = pool->allocate_buffer(kWidth, kHeight, kStride, kFormat);
-    assert(buffer != nullptr);
-
-    frame->copy(buffer->wl_buffer_ptr());
-    display->roundtrip();
-    assert(server.screencopy_copy_received());
-
-    // Compositor signals frame is ready
-    server.send_screencopy_ready(42, 1000000);
-    display->roundtrip();
-
-    assert(frame->is_ready());
-    assert(!frame->is_failed());
-    auto snap = frame->snapshot();
-    assert(snap.status == ScreenCopyFrameSnapshot::Status::Ready);
-    assert(snap.tv_sec == 42);
-    assert(snap.tv_nsec == 1000000);
-
-    events = display->events().drain();
-    bool found_ready = false;
-    for (const auto& ev : events) {
-        if (std::holds_alternative<ScreenCopyReadyEvent>(ev)) {
-            const auto& r = std::get<ScreenCopyReadyEvent>(ev);
-            if (r.frame.tv_sec == 42) {
-                found_ready = true;
-            }
-        }
-    }
-    assert(found_ready);
-
-    // 2. Failure flow
-    auto frame2 = mgr->capture_output(*output, false);
-    assert(frame2 != nullptr);
-    display->roundtrip();
-
-    server.send_screencopy_failed();
-    display->roundtrip();
-
-    assert(frame2->is_failed());
-    assert(!frame2->is_ready());
-
-    events = display->events().drain();
-    bool found_failed = false;
-    for (const auto& ev : events) {
-        if (std::holds_alternative<ScreenCopyFailedEvent>(ev)) {
-            found_failed = true;
-        }
-    }
-    assert(found_failed);
-
-    frame2.reset();
-    frame.reset();
-    buffer.reset();
-    pool.reset();
-    display.reset();
-    server.stop();
-
-    std::cout << "test_screencopy passed!" << std::endl;
-    return 0;
+    run();
+    return bstest::finish("test_screencopy");
 }

@@ -52,7 +52,20 @@ SessionLock::SessionLock(ext_session_lock_v1* lock, Display* display)
 }
 
 SessionLock::~SessionLock() {
-    if (lock_) {
+    if (!lock_) {
+        return;
+    }
+    if (locked_ && !finished_) {
+        // The protocol forbids destroy after locked (only unlock_and_destroy
+        // may end a lock), and dropping the object must not unlock the
+        // session. Free the proxy without a request: the session stays locked
+        // until this client disconnects, after which the compositor keeps it
+        // locked behind a solid colour.
+        wl_proxy_destroy(reinterpret_cast<wl_proxy*>(lock_));
+    } else if (locked_) {
+        // The compositor already ended the lock (finished after locked).
+        ext_session_lock_v1_unlock_and_destroy(lock_);
+    } else {
         ext_session_lock_v1_destroy(lock_);
     }
 }
@@ -86,10 +99,17 @@ std::unique_ptr<SessionLockSurface> SessionLock::create_surface(Output& output) 
 }
 
 void SessionLock::unlock_and_destroy() {
-    if (lock_) {
-        ext_session_lock_v1_unlock_and_destroy(lock_);
-        lock_ = nullptr;
+    if (!lock_) {
+        return;
     }
+    // unlock_and_destroy is a protocol error before locked, and destroy one
+    // after it: a lock that never took is just destroyed.
+    if (locked_) {
+        ext_session_lock_v1_unlock_and_destroy(lock_);
+    } else {
+        ext_session_lock_v1_destroy(lock_);
+    }
+    lock_ = nullptr;
 }
 
 void SessionLock::handle_locked() {

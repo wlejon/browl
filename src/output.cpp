@@ -136,8 +136,20 @@ void Output::handle_mode(uint32_t flags, int32_t width, int32_t height, int32_t 
         current_mode_ = mode;
         geometry_.width = width;
         geometry_.height = height;
+        for (auto& m : modes_) {
+            m.current = false;
+        }
     }
 
+    // A compositor re-sends a mode when it becomes current: update the known
+    // entry rather than listing the mode twice.
+    for (auto& m : modes_) {
+        if (m.width == width && m.height == height && m.refresh_mhz == refresh) {
+            m.current = mode.current;
+            m.preferred = m.preferred || mode.preferred;
+            return;
+        }
+    }
     modes_.push_back(mode);
 }
 

@@ -1,106 +1,115 @@
+// SessionLock against the in-process test-double compositor
+// (fake_session.h): the lock handshake, lock surfaces, and which request ends
+// a lock in each state (unlock only after locked; dropping a locked lock
+// never unlocks). Locking a real compositor is checked in test_sway.
 #include "browl/display.h"
 #include "browl/output.h"
 #include "browl/session_lock.h"
-#include "headless_compositor.h"
-
-#include <cassert>
-#include <iostream>
+#include "fake_session.h"
 
 using namespace browl;
-using namespace browl::test;
+using bstest::find_event;
+
+namespace {
+
+void test_lock_unlock() {
+    bstest::FakeSession s;
+    REQUIRE(s.display != nullptr);
+    Display& display = *s.display;
+
+    auto lock = display.create_session_lock();
+    REQUIRE(lock != nullptr);
+    CHECK(lock->ext_lock_ptr() != nullptr);
+    CHECK(display.roundtrip() >= 0);
+    CHECK(s.server.session_lock_created());
+    CHECK(!lock->is_locked());
+
+    s.server.send_session_locked();
+    CHECK(display.roundtrip() >= 0);
+    CHECK(lock->is_locked());
+    CHECK(!lock->is_finished());
+    CHECK(lock->snapshot().locked);
+    auto events = display.events().drain();
+    CHECK(find_event<SessionLockedEvent>(events) != nullptr);
+
+    auto output = display.default_output();
+    REQUIRE(output != nullptr);
+    auto surface = lock->create_surface(*output);
+    REQUIRE(surface != nullptr);
+    CHECK(surface->wl_surface_ptr() != nullptr);
+    CHECK(surface->ext_lock_surface_ptr() != nullptr);
+    CHECK_EQ(surface->output_id(), output->id());
+    CHECK(display.roundtrip() >= 0);
+    CHECK(s.server.lock_surface_created());
+
+    s.server.configure_lock_surface(1920, 1080);
+    CHECK(display.roundtrip() >= 0);
+    CHECK(surface->configured_size() == (Size{1920, 1080}));
+    events = display.events().drain();
+    const auto* conf = find_event<SessionLockSurfaceConfigureEvent>(
+        events, [&](const SessionLockSurfaceConfigureEvent& e) { return e.surface_id == surface->id(); });
+    REQUIRE(conf != nullptr);
+    CHECK_EQ(conf->output_id, output->id());
+    CHECK_EQ(conf->width, 1920u);
+    CHECK_EQ(conf->height, 1080u);
+    CHECK_EQ(conf->serial, surface->configured_serial());
+
+    surface->ack_configure(surface->configured_serial());
+    surface->commit();
+    CHECK(display.roundtrip() >= 0);
+    CHECK_EQ(s.server.last_lock_surface_ack_serial(), surface->configured_serial());
+
+    surface.reset();
+    CHECK(!s.server.session_unlock_received());
+    lock->unlock_and_destroy();
+    CHECK(display.roundtrip() >= 0);
+    CHECK(s.server.session_unlock_received());
+    CHECK(lock->ext_lock_ptr() == nullptr);
+}
+
+// Dropping a locked SessionLock must leave the session locked: no unlock
+// request reaches the compositor, and the connection stays healthy (no
+// protocol error from a destroy after locked).
+void test_drop_locked_lock() {
+    bstest::FakeSession s;
+    REQUIRE(s.display != nullptr);
+    Display& display = *s.display;
+    auto lock = display.create_session_lock();
+    REQUIRE(lock != nullptr);
+    CHECK(display.roundtrip() >= 0);
+    s.server.send_session_locked();
+    CHECK(display.roundtrip() >= 0);
+    REQUIRE(lock->is_locked());
+    lock.reset();
+    CHECK(display.roundtrip() >= 0);
+    CHECK(!s.server.session_unlock_received());
+}
+
+// A lock the compositor refused (finished before locked) is destroyed, not
+// unlocked.
+void test_refused_lock() {
+    bstest::FakeSession s;
+    REQUIRE(s.display != nullptr);
+    Display& display = *s.display;
+    auto lock = display.create_session_lock();
+    REQUIRE(lock != nullptr);
+    CHECK(display.roundtrip() >= 0);
+    s.server.send_session_lock_finished();
+    CHECK(display.roundtrip() >= 0);
+    CHECK(lock->is_finished());
+    CHECK(!lock->is_locked());
+    auto events = display.events().drain();
+    CHECK(find_event<SessionLockFinishedEvent>(events) != nullptr);
+    lock->unlock_and_destroy();
+    CHECK(display.roundtrip() >= 0);
+    CHECK(!s.server.session_unlock_received());
+}
+
+}  // namespace
 
 int main() {
-    std::cout << "Running test_session_lock..." << std::endl;
-
-    HeadlessCompositor server;
-    server.start();
-
-    int client_fd = server.create_client_fd();
-    assert(client_fd >= 0);
-
-    auto display = Display::connect_to_fd(client_fd);
-    assert(display != nullptr);
-
-    auto lock = display->create_session_lock();
-    assert(lock != nullptr);
-    assert(lock->ext_lock_ptr() != nullptr);
-
-    display->roundtrip();
-    assert(server.session_lock_created());
-
-    // Compositor emits locked event
-    server.send_session_locked();
-    display->roundtrip();
-
-    assert(lock->is_locked());
-    assert(!lock->is_finished());
-
-    auto snap = lock->snapshot();
-    assert(snap.locked);
-    assert(!snap.finished);
-
-    auto events = display->events().drain();
-    bool found_locked = false;
-    for (const auto& ev : events) {
-        if (std::holds_alternative<SessionLockedEvent>(ev)) {
-            found_locked = true;
-        }
-    }
-    assert(found_locked);
-
-    // Create lock surface for output
-    auto output = display->default_output();
-    assert(output != nullptr);
-
-    auto lock_surface = lock->create_surface(*output);
-    assert(lock_surface != nullptr);
-    assert(lock_surface->wl_surface_ptr() != nullptr);
-    assert(lock_surface->ext_lock_surface_ptr() != nullptr);
-
-    display->roundtrip();
-    assert(server.lock_surface_created());
-
-    // Compositor configures lock surface
-    server.configure_lock_surface(1920, 1080);
-    display->roundtrip();
-
-    assert(lock_surface->configured_size().width == 1920);
-    assert(lock_surface->configured_size().height == 1080);
-
-    events = display->events().drain();
-    bool found_surface_configure = false;
-    for (const auto& ev : events) {
-        if (std::holds_alternative<SessionLockSurfaceConfigureEvent>(ev)) {
-            const auto& conf = std::get<SessionLockSurfaceConfigureEvent>(ev);
-            if (conf.surface_id == lock_surface->id()) {
-                found_surface_configure = true;
-                assert(conf.width == 1920);
-                assert(conf.height == 1080);
-            }
-        }
-    }
-    assert(found_surface_configure);
-
-    // Ack configure and commit
-    lock_surface->ack_configure(lock_surface->configured_serial());
-    lock_surface->commit();
-    display->roundtrip();
-
-    assert(server.last_lock_surface_ack_serial() == lock_surface->configured_serial());
-
-    // Destroy lock surfaces before unlocking according to protocol specification
-    lock_surface.reset();
-
-    // Unlock and destroy session lock
-    lock->unlock_and_destroy();
-    display->roundtrip();
-
-    assert(server.session_unlock_received());
-
-    lock.reset();
-    display.reset();
-    server.stop();
-
-    std::cout << "test_session_lock passed!" << std::endl;
-    return 0;
+    test_lock_unlock();
+    test_drop_locked_lock();
+    test_refused_lock();
+    return bstest::finish("test_session_lock");
 }

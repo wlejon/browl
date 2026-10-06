@@ -77,6 +77,10 @@ private:
     size_t size_ = 0;
     size_t used_offset_ = 0;
     wl_shm_pool* pool_ = nullptr;
+    // Mappings replaced by resize(). Buffers created before the resize still
+    // point into them (the same file pages), so they stay mapped until the
+    // pool is destroyed.
+    std::vector<std::pair<void*, size_t>> retired_maps_;
 };
 
 }  // namespace browl

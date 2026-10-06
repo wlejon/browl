@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstdint>
 #include <cstring>
 #include <string>
 
@@ -87,13 +88,17 @@ ShmPool::~ShmPool() {
     if (data_ && data_ != MAP_FAILED) {
         munmap(data_, size_);
     }
+    for (const auto& [ptr, len] : retired_maps_) {
+        munmap(ptr, len);
+    }
     if (fd_ >= 0) {
         close(fd_);
     }
 }
 
 std::shared_ptr<ShmPool> ShmPool::create(wl_shm* shm, size_t initial_size) {
-    if (!shm || initial_size == 0) {
+    // wl_shm sizes are int32 on the wire.
+    if (!shm || initial_size == 0 || initial_size > static_cast<size_t>(INT32_MAX)) {
         return nullptr;
     }
 
@@ -122,6 +127,9 @@ bool ShmPool::resize(size_t new_size) {
     if (new_size <= size_) {
         return true;
     }
+    if (new_size > static_cast<size_t>(INT32_MAX)) {
+        return false;
+    }
 
     if (ftruncate(fd_, static_cast<off_t>(new_size)) < 0) {
         return false;
@@ -133,7 +141,7 @@ bool ShmPool::resize(size_t new_size) {
     }
 
     if (data_ && data_ != MAP_FAILED) {
-        munmap(data_, size_);
+        retired_maps_.emplace_back(data_, size_);
     }
 
     data_ = new_data;
@@ -144,8 +152,11 @@ bool ShmPool::resize(size_t new_size) {
 
 std::shared_ptr<ShmBuffer> ShmPool::create_buffer(size_t offset, int32_t width, int32_t height,
                                                   int32_t stride, uint32_t format) {
+    if (width <= 0 || height <= 0 || stride <= 0) {
+        return nullptr;
+    }
     size_t req_bytes = static_cast<size_t>(stride) * static_cast<size_t>(height);
-    if (offset + req_bytes > size_) {
+    if (offset > size_ || req_bytes > size_ - offset) {
         return nullptr;
     }
 
@@ -165,6 +176,9 @@ std::shared_ptr<ShmBuffer> ShmPool::create_buffer(size_t offset, int32_t width, 
 
 std::shared_ptr<ShmBuffer> ShmPool::allocate_buffer(int32_t width, int32_t height,
                                                     int32_t stride, uint32_t format) {
+    if (width <= 0 || height <= 0 || stride <= 0) {
+        return nullptr;
+    }
     size_t req_bytes = static_cast<size_t>(stride) * static_cast<size_t>(height);
     size_t aligned_offset = (used_offset_ + 15) & ~static_cast<size_t>(15);
 

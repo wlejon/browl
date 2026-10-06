@@ -22,6 +22,8 @@
 #include <wayland-client.h>
 
 #include <algorithm>
+#include <cerrno>
+#include <cstdlib>
 #include <cstring>
 
 namespace browl {
@@ -126,33 +128,58 @@ Display::~Display() {
     }
 }
 
-std::unique_ptr<Display> Display::connect(const std::string& name) {
+std::string unavailable_reason() {
+    return {};
+}
+
+std::unique_ptr<Display> Display::connect(const std::string& name, std::string* error) {
     wl_display* disp = wl_display_connect(name.empty() ? nullptr : name.c_str());
     if (!disp) {
+        if (error) {
+            const char* env = std::getenv("WAYLAND_DISPLAY");
+            *error = "cannot connect to Wayland display '" +
+                     (name.empty() ? std::string(env ? env : "wayland-0") : name) +
+                     "': " + std::strerror(errno);
+        }
         return nullptr;
     }
 
     auto d = std::unique_ptr<Display>(new Display(disp));
-    d->init_registry();
+    if (!d->init_registry(error)) {
+        return nullptr;
+    }
     return d;
 }
 
-std::unique_ptr<Display> Display::connect_to_fd(int fd) {
+std::unique_ptr<Display> Display::connect_to_fd(int fd, std::string* error) {
     wl_display* disp = wl_display_connect_to_fd(fd);
     if (!disp) {
+        if (error) {
+            *error = std::string("cannot use fd as a Wayland connection: ") + std::strerror(errno);
+        }
         return nullptr;
     }
 
     auto d = std::unique_ptr<Display>(new Display(disp));
-    d->init_registry();
+    if (!d->init_registry(error)) {
+        return nullptr;
+    }
     return d;
 }
 
-void Display::init_registry() {
+bool Display::init_registry(std::string* error) {
     registry_ = wl_display_get_registry(display_);
     wl_registry_add_listener(registry_, &registry_listener, this);
-    roundtrip();
-    roundtrip();
+    // The second roundtrip collects the events the newly bound globals send
+    // on bind (output modes, seat capabilities).
+    if (roundtrip() < 0 || roundtrip() < 0) {
+        if (error) {
+            *error = std::string("Wayland roundtrip failed: ") +
+                     std::strerror(wl_display_get_error(display_));
+        }
+        return false;
+    }
+    return true;
 }
 
 int Display::fd() const {

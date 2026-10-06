@@ -1,108 +1,89 @@
+// ForeignToplevelManager against the in-process test-double compositor
+// (fake_session.h): toplevels announced, updated in done-delimited batches,
+// requests sent, and closed. test_sway does the same with real windows.
 #include "browl/display.h"
 #include "browl/foreign_toplevel.h"
 #include "browl/seat.h"
-#include "headless_compositor.h"
-
-#include <cassert>
-#include <iostream>
+#include "fake_session.h"
 
 using namespace browl;
-using namespace browl::test;
+using bstest::find_event;
 
-int main() {
-    std::cout << "Running test_foreign_toplevel..." << std::endl;
+namespace {
 
-    HeadlessCompositor server;
-    server.start();
+void run() {
+    bstest::FakeSession s;
+    REQUIRE(s.display != nullptr);
+    Display& display = *s.display;
 
-    int client_fd = server.create_client_fd();
-    assert(client_fd >= 0);
+    auto mgr = display.foreign_toplevel_manager();
+    REQUIRE(mgr != nullptr);
+    CHECK(display.foreign_toplevel_manager() == mgr);  // one per display
+    CHECK(mgr->zwlr_manager_ptr() != nullptr);
+    CHECK(mgr->toplevels().empty());
 
-    auto display = Display::connect_to_fd(client_fd);
-    assert(display != nullptr);
-
-    auto mgr = display->foreign_toplevel_manager();
-    assert(mgr != nullptr);
-    assert(mgr->zwlr_manager_ptr() != nullptr);
-    assert(mgr->toplevels().empty());
-
-    // Compositor announces a new toplevel window
-    // State 4 = Activated
-    auto* comp_top = server.create_foreign_toplevel("Terminal", "org.bro.terminal", 4);
-    assert(comp_top != nullptr);
-    display->roundtrip();
+    // The fake takes a browl::toplevel_state mask and sends the wire enum.
+    auto* comp_top = s.server.create_foreign_toplevel("Terminal", "org.bro.terminal", toplevel_state::Activated);
+    REQUIRE(comp_top != nullptr);
+    CHECK(display.roundtrip() >= 0);
 
     auto tops = mgr->toplevels();
-    assert(tops.size() == 1);
+    REQUIRE(tops.size() == 1);
     auto top = tops.front();
-    assert(top != nullptr);
-    assert(top->title() == "Terminal");
-    assert(top->app_id() == "org.bro.terminal");
-    assert(top->is_activated());
-    assert(!top->is_maximized());
-    assert(!top->is_minimized());
-    assert(!top->is_fullscreen());
+    CHECK(mgr->find_toplevel(top->id()) == top);
+    CHECK_EQ(top->title(), std::string("Terminal"));
+    CHECK_EQ(top->app_id(), std::string("org.bro.terminal"));
+    CHECK(top->is_activated());
+    CHECK(!top->is_maximized());
+    CHECK(!top->is_minimized());
+    CHECK(!top->is_fullscreen());
+    const auto snaps = mgr->snapshots();
+    REQUIRE(snaps.size() == 1);
+    CHECK_EQ(snaps.front().app_id, std::string("org.bro.terminal"));
 
-    auto snaps = mgr->snapshots();
-    assert(snaps.size() == 1);
-    assert(snaps.front().title == "Terminal");
-    assert(snaps.front().app_id == "org.bro.terminal");
+    auto events = display.events().drain();
+    const auto* created = find_event<ToplevelCreatedEvent>(events);
+    REQUIRE(created != nullptr);
+    CHECK_EQ(created->toplevel.id, top->id());
+    CHECK_EQ(created->toplevel.title, std::string("Terminal"));
 
-    // Verify ToplevelCreatedEvent in event queue
-    auto events = display->events().drain();
-    bool found_created = false;
-    for (const auto& ev : events) {
-        if (std::holds_alternative<ToplevelCreatedEvent>(ev)) {
-            if (std::get<ToplevelCreatedEvent>(ev).toplevel.id == top->id()) {
-                found_created = true;
-            }
-        }
-    }
-    assert(found_created);
+    // Changes apply at done, as one snapshot.
+    s.server.update_toplevel_title(comp_top, "Terminal - vim");
+    s.server.update_toplevel_state(comp_top, toplevel_state::Maximized | toplevel_state::Activated);
+    CHECK(display.roundtrip() >= 0);
+    CHECK_EQ(top->title(), std::string("Terminal - vim"));
+    CHECK(top->is_maximized());
+    CHECK(top->is_activated());
+    events = display.events().drain();
+    const auto* done = find_event<ToplevelDoneEvent>(events);
+    REQUIRE(done != nullptr);
+    CHECK_EQ(done->snapshot.title, std::string("Terminal - vim"));
+    CHECK(find_event<ToplevelTitleEvent>(events) != nullptr);
+    CHECK(find_event<ToplevelCreatedEvent>(events) == nullptr);
 
-    // Title and state changes
-    server.update_toplevel_title(comp_top, "Terminal - vim");
-    // State 1 | 4 = Maximized | Activated
-    server.update_toplevel_state(comp_top, 1 | 4);
-    display->roundtrip();
-
-    assert(top->title() == "Terminal - vim");
-    assert(top->is_maximized());
-    assert(top->is_activated());
-
-    // Client requests: activate and minimize
-    auto seat = display->default_seat();
-    assert(seat != nullptr);
+    auto seat = display.default_seat();
+    REQUIRE(seat != nullptr);
     top->activate(*seat);
     top->set_minimized();
     top->close();
-    display->roundtrip();
+    CHECK(display.roundtrip() >= 0);
+    CHECK(comp_top->activated);
+    CHECK(comp_top->minimized);
+    CHECK(comp_top->closed);
 
-    assert(comp_top->activated);
-    assert(comp_top->minimized);
-    assert(comp_top->closed);
+    s.server.close_toplevel(comp_top);
+    CHECK(display.roundtrip() >= 0);
+    CHECK(mgr->toplevels().empty());
+    CHECK(mgr->snapshots().empty());
+    events = display.events().drain();
+    CHECK(find_event<ToplevelClosedEvent>(events, [&](const ToplevelClosedEvent& e) {
+              return e.id == top->id();
+          }) != nullptr);
+}
 
-    // Close toplevel from compositor
-    server.close_toplevel(comp_top);
-    display->roundtrip();
+}  // namespace
 
-    assert(mgr->toplevels().empty());
-    assert(mgr->snapshots().empty());
-
-    events = display->events().drain();
-    bool found_closed = false;
-    for (const auto& ev : events) {
-        if (std::holds_alternative<ToplevelClosedEvent>(ev)) {
-            if (std::get<ToplevelClosedEvent>(ev).id == top->id()) {
-                found_closed = true;
-            }
-        }
-    }
-    assert(found_closed);
-
-    display.reset();
-    server.stop();
-
-    std::cout << "test_foreign_toplevel passed!" << std::endl;
-    return 0;
+int main() {
+    run();
+    return bstest::finish("test_foreign_toplevel");
 }

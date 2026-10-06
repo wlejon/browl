@@ -222,6 +222,16 @@ void HeadlessCompositor::send_output_done() {
     }
 }
 
+void HeadlessCompositor::send_output_mode(uint32_t flags, int32_t width, int32_t height,
+                                          int32_t refresh_mhz) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (output_resource_) {
+        wl_output_send_mode(output_resource_, flags, width, height, refresh_mhz);
+        wl_output_send_done(output_resource_);
+        wl_display_flush_clients(display_);
+    }
+}
+
 void HeadlessCompositor::send_seat_caps(uint32_t caps, const char* name) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (seat_resource_) {

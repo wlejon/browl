@@ -33,6 +33,8 @@ public:
     bool is_finished() const { return finished_; }
 
     std::unique_ptr<SessionLockSurface> create_surface(Output& output);
+    /// Ends the lock. Only this unlocks the session: destroying a SessionLock
+    /// that is locked leaves the session locked.
     void unlock_and_destroy();
 
     // Internal listener callbacks

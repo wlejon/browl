@@ -1,124 +1,84 @@
+// Positioner and Popup against the in-process test-double compositor
+// (fake_session.h): creation on a layer surface, configure, reposition and
+// dismissal. Positioning by a real compositor is checked in test_sway.
 #include "browl/display.h"
 #include "browl/layer_surface.h"
 #include "browl/popup.h"
-#include "headless_compositor.h"
-
-#include <cassert>
-#include <iostream>
+#include "fake_session.h"
 
 using namespace browl;
-using namespace browl::test;
+using bstest::find_event;
 
-int main() {
-    std::cout << "Running test_popup..." << std::endl;
+namespace {
 
-    HeadlessCompositor server;
-    server.start();
-
-    int client_fd = server.create_client_fd();
-    assert(client_fd >= 0);
-
-    auto display = Display::connect_to_fd(client_fd);
-    assert(display != nullptr);
+void run() {
+    bstest::FakeSession s;
+    REQUIRE(s.display != nullptr);
+    Display& display = *s.display;
 
     LayerSurfaceConfig config;
     config.name_space = "panel";
-    config.layer = Layer::Top;
     config.size = Size{1920, 48};
-    auto layer = display->create_layer_surface(config);
-    assert(layer != nullptr);
+    auto layer = display.create_layer_surface(config);
+    REQUIRE(layer != nullptr);
 
-    auto positioner = display->create_positioner();
-    assert(positioner != nullptr);
+    auto positioner = display.create_positioner();
+    REQUIRE(positioner != nullptr);
     positioner->set_size(200, 300);
     positioner->set_anchor_rect(100, 48, 50, 0);
     positioner->set_anchor(PositionerAnchor::BottomLeft);
     positioner->set_gravity(Gravity::BottomRight);
-    positioner->set_constraint_adjustment(constraint_adjustment::SlideX |
-                                          constraint_adjustment::FlipY);
+    positioner->set_constraint_adjustment(constraint_adjustment::SlideX | constraint_adjustment::FlipY);
     positioner->set_offset(0, 5);
 
     auto popup = layer->create_popup(*positioner);
-    assert(popup != nullptr);
-    assert(popup->wl_surface_ptr() != nullptr);
-    assert(popup->xdg_surface_ptr() != nullptr);
-    assert(popup->xdg_popup_ptr() != nullptr);
+    REQUIRE(popup != nullptr);
+    CHECK(popup->wl_surface_ptr() != nullptr);
+    CHECK(popup->xdg_surface_ptr() != nullptr);
+    CHECK(popup->xdg_popup_ptr() != nullptr);
+    CHECK(popup->id() != layer->id());
+    CHECK(display.roundtrip() >= 0);
+    CHECK(s.server.popup_created());
 
-    display->roundtrip();
-    assert(server.popup_created());
-
-    // Initial snapshot
     auto snap = popup->snapshot();
-    assert(!snap.configured);
-    assert(!snap.dismissed);
+    CHECK(!snap.configured);
+    CHECK(!snap.dismissed);
 
-    // Compositor configures popup
-    server.configure_popup(100, 53, 200, 300);
-    display->roundtrip();
-
+    s.server.configure_popup(100, 53, 200, 300);
+    CHECK(display.roundtrip() >= 0);
     snap = popup->snapshot();
-    assert(snap.configured);
-    assert(snap.geometry.x == 100);
-    assert(snap.geometry.y == 53);
-    assert(snap.geometry.width == 200);
-    assert(snap.geometry.height == 300);
+    CHECK(snap.configured);
+    CHECK(snap.geometry == (Rect{100, 53, 200, 300}));
+    auto events = display.events().drain();
+    const auto* conf = find_event<PopupConfigureEvent>(
+        events, [&](const PopupConfigureEvent& e) { return e.surface_id == popup->id(); });
+    REQUIRE(conf != nullptr);
+    CHECK_EQ(conf->x, 100);
+    CHECK_EQ(conf->y, 53);
+    CHECK_EQ(conf->width, 200);
+    CHECK_EQ(conf->height, 300);
 
-    auto events = display->events().drain();
-    bool found_popup_configure = false;
-    for (const auto& ev : events) {
-        if (std::holds_alternative<PopupConfigureEvent>(ev)) {
-            const auto& conf = std::get<PopupConfigureEvent>(ev);
-            if (conf.surface_id == popup->id()) {
-                found_popup_configure = true;
-                assert(conf.x == 100);
-                assert(conf.y == 53);
-                assert(conf.width == 200);
-                assert(conf.height == 300);
-            }
-        }
-    }
-    assert(found_popup_configure);
-
-    // Reposition
     popup->reposition(*positioner, 1234);
-    display->roundtrip();
-    assert(server.popup_repositioned_received());
+    CHECK(display.roundtrip() >= 0);
+    CHECK(s.server.popup_repositioned_received());
+    events = display.events().drain();
+    CHECK(find_event<PopupRepositionedEvent>(events, [&](const PopupRepositionedEvent& e) {
+              return e.surface_id == popup->id() && e.token == 1234u;
+          }) != nullptr);
+    CHECK_EQ(popup->snapshot().repositioned_token, 1234u);
 
-    events = display->events().drain();
-    bool found_repositioned = false;
-    for (const auto& ev : events) {
-        if (std::holds_alternative<PopupRepositionedEvent>(ev)) {
-            if (std::get<PopupRepositionedEvent>(ev).token == 1234) {
-                found_repositioned = true;
-            }
-        }
-    }
-    assert(found_repositioned);
+    s.server.send_popup_done();
+    CHECK(display.roundtrip() >= 0);
+    CHECK(popup->snapshot().dismissed);
+    events = display.events().drain();
+    CHECK(find_event<PopupDoneEvent>(events, [&](const PopupDoneEvent& e) {
+              return e.surface_id == popup->id();
+          }) != nullptr);
+}
 
-    // Popup done / dismissal
-    server.send_popup_done();
-    display->roundtrip();
+}  // namespace
 
-    snap = popup->snapshot();
-    assert(snap.dismissed);
-
-    events = display->events().drain();
-    bool found_popup_done = false;
-    for (const auto& ev : events) {
-        if (std::holds_alternative<PopupDoneEvent>(ev)) {
-            if (std::get<PopupDoneEvent>(ev).surface_id == popup->id()) {
-                found_popup_done = true;
-            }
-        }
-    }
-    assert(found_popup_done);
-
-    popup.reset();
-    positioner.reset();
-    layer.reset();
-    display.reset();
-    server.stop();
-
-    std::cout << "test_popup passed!" << std::endl;
-    return 0;
+int main() {
+    run();
+    return bstest::finish("test_popup");
 }

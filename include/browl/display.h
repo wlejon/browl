@@ -37,10 +37,19 @@ class IdleNotification;
 class ScreenCopyManager;
 class ShmPool;
 
+/// Why Wayland cannot be used on this platform: empty on Linux, the reason
+/// elsewhere (where Display::connect() always fails with it).
+std::string unavailable_reason();
+
 class Display {
 public:
-    static std::unique_ptr<Display> connect(const std::string& name = "");
-    static std::unique_ptr<Display> connect_to_fd(int fd);
+    /// Connects to the compositor `name` (or $WAYLAND_DISPLAY when empty) and
+    /// binds the globals. On failure returns nullptr and, if `error` is given,
+    /// says why.
+    static std::unique_ptr<Display> connect(const std::string& name = "",
+                                            std::string* error = nullptr);
+    /// Same, over an already connected socket; takes ownership of `fd`.
+    static std::unique_ptr<Display> connect_to_fd(int fd, std::string* error = nullptr);
     ~Display();
 
     Display(const Display&) = delete;
@@ -119,7 +128,7 @@ public:
 
 private:
     explicit Display(wl_display* display);
-    void init_registry();
+    bool init_registry(std::string* error);
 
     wl_display* display_ = nullptr;
     wl_registry* registry_ = nullptr;
