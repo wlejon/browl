@@ -50,6 +50,17 @@ struct EventLog {
     const E* find() const {
         return find<E>([](const E&) { return true; });
     }
+    template <class E, class Pred>
+    const E* find_last(Pred pred) const {
+        for (auto it = all.rbegin(); it != all.rend(); ++it) {
+            if (const E* e = std::get_if<E>(&*it); e && pred(*e)) return e;
+        }
+        return nullptr;
+    }
+    template <class E>
+    const E* find_last() const {
+        return find_last<E>([](const E&) { return true; });
+    }
 };
 
 // A width x height buffer of one ARGB8888 colour from `pool`.
