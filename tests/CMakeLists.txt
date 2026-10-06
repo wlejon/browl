@@ -27,6 +27,18 @@ browl_test(test_event_queue SOURCES test_event_queue.cpp)
 
 if(NOT BROWL_LINUX)
     browl_test(test_unavailable SOURCES test_unavailable.cpp)
+
+    # Every test executable links no_dialogs.cpp (see the file). Windows never
+    # gets past the return() below, so this is the end of the file there.
+    if(WIN32)
+        get_property(_test_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+        foreach(_t IN LISTS _test_targets)
+            get_target_property(_type ${_t} TYPE)
+            if(_type STREQUAL "EXECUTABLE")
+                target_sources(${_t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/no_dialogs.cpp)
+            endif()
+        endforeach()
+    endif()
     return()
 endif()
 

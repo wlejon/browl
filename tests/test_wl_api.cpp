@@ -5,6 +5,7 @@
 #include "fake_session.h"
 #include "check.h"
 
+#include <cstdlib>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -348,7 +349,11 @@ void run() {
     // 9. GC Stress Safety Loop
     std::cout << "Testing GC Stress Safety..." << std::endl;
     {
-        for (int i = 0; i < 150; ++i) {
+        // Under BRONZE_GC_STRESS every allocation already collects, so a few
+        // rounds exercise exactly what 150 do; at -O0 (the Coverage job) each
+        // round costs ~2 s there, and 150 of them overran the test's timeout.
+        const int rounds = std::getenv("BRONZE_GC_STRESS") ? 5 : 150;
+        for (int i = 0; i < rounds; ++i) {
             auto r = bronze::eval::evalScript(
                 "(function() {\n"
                 "    const outs = bro.wl.getOutputs();\n"
