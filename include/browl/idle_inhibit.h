@@ -19,7 +19,7 @@ public:
 
 private:
     zwp_idle_inhibitor_v1* inhibitor_ = nullptr;
-    Display* display_ = nullptr;
+    [[maybe_unused]] Display* display_ = nullptr;
 };
 
 }  // namespace browl

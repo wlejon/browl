@@ -39,7 +39,7 @@ public:
 
 private:
     xdg_positioner* positioner_ = nullptr;
-    Display* display_ = nullptr;
+    [[maybe_unused]] Display* display_ = nullptr;
 };
 
 class Popup {

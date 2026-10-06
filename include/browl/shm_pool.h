@@ -26,6 +26,8 @@ public:
     wl_buffer* wl_buffer_ptr() const { return buffer_; }
     void* data() const { return data_; }
     size_t size() const { return size_; }
+    /// Byte offset of this buffer within its pool.
+    size_t offset() const { return offset_; }
     int32_t width() const { return width_; }
     int32_t height() const { return height_; }
     int32_t stride() const { return stride_; }
@@ -71,7 +73,7 @@ public:
 private:
     ShmPool(wl_shm* shm, int fd, void* data, size_t size, wl_shm_pool* pool);
 
-    wl_shm* shm_ = nullptr;
+    [[maybe_unused]] wl_shm* shm_ = nullptr;
     int fd_ = -1;
     void* data_ = nullptr;
     size_t size_ = 0;

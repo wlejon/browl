@@ -50,6 +50,8 @@ void run() {
     const auto off_b = static_cast<uint8_t*>(b->data()) - base;
     CHECK(off_b >= off_a + static_cast<ptrdiff_t>(a->size()));
     CHECK_EQ(off_b % 16, ptrdiff_t(0));
+    CHECK_EQ(a->offset(), size_t(off_a));
+    CHECK_EQ(b->offset(), size_t(off_b));
 
     std::memset(a->data(), 0xAA, a->size());
     std::memset(b->data(), 0x55, b->size());
