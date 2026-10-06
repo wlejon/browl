@@ -41,6 +41,13 @@ class ShmPool;
 /// elsewhere (where Display::connect() always fails with it).
 std::string unavailable_reason();
 
+/// Whether Wayland is available on this platform.
+inline bool available(std::string* reason = nullptr) {
+    std::string r = unavailable_reason();
+    if (reason) *reason = r;
+    return r.empty();
+}
+
 class Display {
 public:
     /// Connects to the compositor `name` (or $WAYLAND_DISPLAY when empty) and

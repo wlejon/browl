@@ -76,3 +76,35 @@ foreach(_test test_sway_shell test_sway_toplevel test_sway_lock_idle)
         COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/run-headless-sway.sh $<TARGET_FILE:${_test}>)
     set_tests_properties(${_test} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 endforeach()
+
+if(BROWL_ENABLE_API)
+    add_executable(browl_test_api
+        test_wl_api.cpp
+    )
+    target_include_directories(browl_test_api PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src/api
+        ${PROJECT_SOURCE_DIR}/src
+    )
+    target_link_libraries(browl_test_api PRIVATE
+        browl_api
+        browl::browl
+        headless_compositor
+        bronze_runtime_shared
+    )
+    browl_warnings(browl_test_api)
+
+    if(NOT BRASS_HOST_BACKEND)
+        message(STATUS "browl: browl_test_api not registered (brass has no code generator for this target)")
+    else()
+        add_test(NAME browl_test_api COMMAND browl_test_api)
+        set_tests_properties(browl_test_api PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+
+        add_test(NAME browl_test_api_gc_stress COMMAND browl_test_api)
+        set_tests_properties(browl_test_api_gc_stress PROPERTIES
+            TIMEOUT 60
+            SKIP_RETURN_CODE 77
+            ENVIRONMENT "BRONZE_GC_STRESS=1;BRONZE_GC_POISON=1"
+        )
+    endif()
+endif()
