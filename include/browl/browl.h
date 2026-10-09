@@ -6,6 +6,7 @@
 #include "browl/foreign_toplevel.h"
 #include "browl/idle_inhibit.h"
 #include "browl/idle_notify.h"
+#include "browl/keymap.h"
 #include "browl/layer_surface.h"
 #include "browl/output.h"
 #include "browl/popup.h"
@@ -14,3 +15,4 @@
 #include "browl/session_lock.h"
 #include "browl/shm_pool.h"
 #include "browl/types.h"
+#include "browl/window.h"

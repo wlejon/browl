@@ -162,8 +162,100 @@ static void xdg_surface_destroy_req(struct wl_client* /*client*/, struct wl_reso
     wl_resource_destroy(resource);
 }
 
-static void xdg_surface_get_toplevel_req(struct wl_client* /*client*/, struct wl_resource* /*resource*/,
-                                         uint32_t /*id*/) {}
+// --- xdg_toplevel ---------------------------------------------------------------
+
+static HeadlessCompositor* comp_of(struct wl_resource* resource) {
+    return static_cast<HeadlessCompositor*>(wl_resource_get_user_data(resource));
+}
+
+static void toplevel_destroy_req(struct wl_client* /*client*/, struct wl_resource* resource) {
+    wl_resource_destroy(resource);
+}
+
+static void toplevel_set_parent_req(struct wl_client*, struct wl_resource*, struct wl_resource*) {}
+
+static void toplevel_set_title_req(struct wl_client* /*client*/, struct wl_resource* resource,
+                                   const char* title) {
+    comp_of(resource)->app_.title = title;
+}
+
+static void toplevel_set_app_id_req(struct wl_client* /*client*/, struct wl_resource* resource,
+                                    const char* app_id) {
+    comp_of(resource)->app_.app_id = app_id;
+}
+
+static void toplevel_show_window_menu_req(struct wl_client*, struct wl_resource*, struct wl_resource*,
+                                          uint32_t, int32_t, int32_t) {}
+static void toplevel_move_req(struct wl_client*, struct wl_resource*, struct wl_resource*, uint32_t) {}
+static void toplevel_resize_req(struct wl_client*, struct wl_resource*, struct wl_resource*, uint32_t,
+                                uint32_t) {}
+
+static void toplevel_set_max_size_req(struct wl_client* /*client*/, struct wl_resource* resource,
+                                      int32_t width, int32_t height) {
+    comp_of(resource)->app_.max_width = width;
+    comp_of(resource)->app_.max_height = height;
+}
+
+static void toplevel_set_min_size_req(struct wl_client* /*client*/, struct wl_resource* resource,
+                                      int32_t width, int32_t height) {
+    comp_of(resource)->app_.min_width = width;
+    comp_of(resource)->app_.min_height = height;
+}
+
+static void toplevel_set_maximized_req(struct wl_client*, struct wl_resource* resource) {
+    comp_of(resource)->app_.maximized = true;
+}
+
+static void toplevel_unset_maximized_req(struct wl_client*, struct wl_resource* resource) {
+    comp_of(resource)->app_.maximized = false;
+}
+
+static void toplevel_set_fullscreen_req(struct wl_client*, struct wl_resource* resource, struct wl_resource*) {
+    comp_of(resource)->app_.fullscreen = true;
+}
+
+static void toplevel_unset_fullscreen_req(struct wl_client*, struct wl_resource* resource) {
+    comp_of(resource)->app_.fullscreen = false;
+}
+
+static void toplevel_set_minimized_req(struct wl_client*, struct wl_resource* resource) {
+    comp_of(resource)->app_.minimized = true;
+}
+
+static const struct xdg_toplevel_interface toplevel_impl = {
+    .destroy = toplevel_destroy_req,
+    .set_parent = toplevel_set_parent_req,
+    .set_title = toplevel_set_title_req,
+    .set_app_id = toplevel_set_app_id_req,
+    .show_window_menu = toplevel_show_window_menu_req,
+    .move = toplevel_move_req,
+    .resize = toplevel_resize_req,
+    .set_max_size = toplevel_set_max_size_req,
+    .set_min_size = toplevel_set_min_size_req,
+    .set_maximized = toplevel_set_maximized_req,
+    .unset_maximized = toplevel_unset_maximized_req,
+    .set_fullscreen = toplevel_set_fullscreen_req,
+    .unset_fullscreen = toplevel_unset_fullscreen_req,
+    .set_minimized = toplevel_set_minimized_req,
+};
+
+static void toplevel_destroyed(struct wl_resource* resource) {
+    auto* comp = comp_of(resource);
+    ++comp->app_.toplevels_destroyed;
+    if (comp->toplevel_resource_ == resource) {
+        comp->toplevel_resource_ = nullptr;
+    }
+}
+
+static void xdg_surface_get_toplevel_req(struct wl_client* client, struct wl_resource* resource,
+                                         uint32_t id) {
+    auto* comp = comp_of(resource);
+    struct wl_resource* res =
+        wl_resource_create(client, &xdg_toplevel_interface, wl_resource_get_version(resource), id);
+    wl_resource_set_implementation(res, &toplevel_impl, comp, toplevel_destroyed);
+    comp->toplevel_resource_ = res;
+    ++comp->app_.toplevels_created;
+}
 
 static void xdg_surface_get_popup_req(struct wl_client* client, struct wl_resource* resource,
                                       uint32_t id, struct wl_resource* /*parent*/,
@@ -177,11 +269,23 @@ static void xdg_surface_get_popup_req(struct wl_client* client, struct wl_resour
     }
 }
 
-static void xdg_surface_set_window_geometry_req(struct wl_client* /*client*/, struct wl_resource* /*resource*/,
-                                                int32_t /*x*/, int32_t /*y*/, int32_t /*width*/, int32_t /*height*/) {}
+static void xdg_surface_set_window_geometry_req(struct wl_client* /*client*/, struct wl_resource* resource,
+                                                int32_t /*x*/, int32_t /*y*/, int32_t width, int32_t height) {
+    comp_of(resource)->app_.geometry_width = width;
+    comp_of(resource)->app_.geometry_height = height;
+}
 
-static void xdg_surface_ack_configure_req(struct wl_client* /*client*/, struct wl_resource* /*resource*/,
-                                          uint32_t /*serial*/) {}
+static void xdg_surface_ack_configure_req(struct wl_client* /*client*/, struct wl_resource* resource,
+                                          uint32_t serial) {
+    comp_of(resource)->app_.last_ack_serial = serial;
+}
+
+static void xdg_surface_destroyed(struct wl_resource* resource) {
+    auto* comp = comp_of(resource);
+    if (comp->xdg_surface_resource_ == resource) {
+        comp->xdg_surface_resource_ = nullptr;
+    }
+}
 
 static const struct xdg_surface_interface xdg_surface_impl = {
     .destroy = xdg_surface_destroy_req,
@@ -207,11 +311,14 @@ static void xdg_wm_base_create_positioner_req(struct wl_client* client, struct w
 }
 
 static void xdg_wm_base_get_xdg_surface_req(struct wl_client* client, struct wl_resource* resource,
-                                            uint32_t id, struct wl_resource* /*surface*/) {
+                                            uint32_t id, struct wl_resource* surface) {
     auto* comp = static_cast<HeadlessCompositor*>(wl_resource_get_user_data(resource));
     struct wl_resource* res =
         wl_resource_create(client, &xdg_surface_interface, wl_resource_get_version(resource), id);
-    wl_resource_set_implementation(res, &xdg_surface_impl, comp, nullptr);
+    wl_resource_set_implementation(res, &xdg_surface_impl, comp, xdg_surface_destroyed);
+    comp->xdg_surface_resource_ = res;
+    comp->window_surface_ = surface;
+    ++comp->app_.xdg_surfaces_created;
 }
 
 static void xdg_wm_base_pong_req(struct wl_client* /*client*/, struct wl_resource* /*resource*/,
@@ -319,7 +426,7 @@ void HeadlessCompositor::init_shell_globals() {
     layer_shell_global_ = wl_global_create(
         display_, &zwlr_layer_shell_v1_interface, 4, this, bind_layer_shell);
     xdg_wm_base_global_ = wl_global_create(
-        display_, &xdg_wm_base_interface, 5, this, bind_xdg_wm_base);
+        display_, &xdg_wm_base_interface, 6, this, bind_xdg_wm_base);
     foreign_toplevel_global_ = wl_global_create(
         display_, &zwlr_foreign_toplevel_manager_v1_interface, 3, this, bind_foreign_toplevel_manager);
 }

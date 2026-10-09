@@ -20,6 +20,8 @@ std::string unavailable_reason() {
 // ---- Display ----------------------------------------------------------------
 
 Display::Display(wl_display* display) : display_(display) {}
+struct Display::AppGlobals {};
+
 Display::~Display() = default;
 
 std::unique_ptr<Display> Display::connect(const std::string&, std::string* error) {
@@ -73,6 +75,27 @@ std::vector<std::shared_ptr<Seat>> Display::seats() const { return {}; }
 std::shared_ptr<Seat> Display::seat_by_id(SeatId) const { return nullptr; }
 std::shared_ptr<Seat> Display::default_seat() const { return nullptr; }
 
+bool Display::has_decoration_manager() const { return false; }
+bool Display::has_viewporter() const { return false; }
+bool Display::has_fractional_scale() const { return false; }
+bool Display::has_presentation() const { return false; }
+bool Display::has_activation() const { return false; }
+bool Display::has_cursor_shape() const { return false; }
+bool Display::has_pointer_constraints() const { return false; }
+bool Display::has_relative_pointer() const { return false; }
+bool Display::has_data_device() const { return false; }
+bool Display::has_primary_selection() const { return false; }
+bool Display::has_text_input() const { return false; }
+bool Display::has_toplevel_icon() const { return false; }
+bool Display::has_xdg_output() const { return false; }
+void Display::enable_input() { input_enabled_ = true; }
+std::unique_ptr<Window> Display::create_window(const WindowConfig&) { return nullptr; }
+SurfaceId Display::surface_id_of(wl_surface*) const { return kNoSurface; }
+RequestId Display::request_activation_token(const std::string&, wl_surface*, Seat*, uint32_t) { return 0; }
+bool Display::activate(const std::string&, wl_surface*) { return false; }
+RequestId Display::request_presentation_feedback(wl_surface*) { return 0; }
+int Display::presentation_clock_id() const { return -1; }
+
 SurfaceId Display::next_surface_id() { return next_surface_id_++; }
 uint64_t Display::next_notification_id() { return next_notification_id_++; }
 void Display::handle_global(uint32_t, const char*, uint32_t) {}
@@ -95,6 +118,22 @@ void Output::handle_scale(int32_t) {}
 void Output::handle_name(const char*) {}
 void Output::handle_description(const char*) {}
 void Output::detach() {}
+Rect Output::logical() const { return {}; }
+void Output::attach_xdg_output(zxdg_output_manager_v1*) {}
+void Output::handle_logical_position(int32_t, int32_t) {}
+void Output::handle_logical_size(int32_t, int32_t) {}
+void Output::handle_xdg_done() {}
+
+SelectionContents text_selection(const std::string& utf8) {
+    std::vector<uint8_t> bytes(utf8.begin(), utf8.end());
+    SelectionContents contents;
+    for (const char* mime : {"text/plain;charset=utf-8", "text/plain", "UTF8_STRING", "TEXT", "STRING"}) {
+        contents.emplace_back(mime, bytes);
+    }
+    return contents;
+}
+
+struct Seat::Impl {};
 
 Seat::Seat(SeatId id, wl_seat* wl_seat, Display* display) : id_(id), wl_seat_(wl_seat), display_(display) {}
 Seat::~Seat() = default;
@@ -105,7 +144,109 @@ SeatSnapshot Seat::snapshot() const {
 }
 void Seat::handle_capabilities(uint32_t) {}
 void Seat::handle_name(const char*) {}
+void Seat::enable_input() {}
 void Seat::detach() {}
+std::shared_ptr<const Keymap> Seat::keymap() const { return nullptr; }
+uint32_t Seat::modifiers() const { return 0; }
+int32_t Seat::repeat_rate() const { return 25; }
+int32_t Seat::repeat_delay_ms() const { return 600; }
+uint32_t Seat::last_input_serial() const { return 0; }
+uint32_t Seat::pointer_enter_serial() const { return 0; }
+SurfaceId Seat::pointer_focus() const { return kNoSurface; }
+SurfaceId Seat::keyboard_focus() const { return kNoSurface; }
+void Seat::set_cursor(CursorShape) {}
+CursorShape Seat::cursor() const { return CursorShape::Default; }
+bool Seat::lock_pointer(wl_surface*) { return false; }
+void Seat::unlock_pointer() {}
+bool Seat::pointer_locked() const { return false; }
+void Seat::warp_pointer(wl_surface*, double, double) {}
+bool Seat::set_selection(Selection, SelectionContents) { return false; }
+void Seat::clear_selection(Selection) {}
+std::vector<std::string> Seat::selection_mime_types(Selection) const { return {}; }
+bool Seat::owns_selection(Selection) const { return false; }
+bool Seat::has_selection_protocol(Selection) const { return false; }
+std::optional<std::vector<uint8_t>> Seat::read_selection(Selection, const std::string&, std::chrono::milliseconds) {
+    return std::nullopt;
+}
+void Seat::set_drag_mime_types(std::vector<std::string>) {}
+std::optional<std::vector<uint8_t>> Seat::read_drop(const std::string&, std::chrono::milliseconds) {
+    return std::nullopt;
+}
+void Seat::finish_drop() {}
+bool Seat::has_text_input() const { return false; }
+void Seat::enable_text_input(uint32_t, ContentPurpose) {}
+void Seat::disable_text_input() {}
+bool Seat::text_input_enabled() const { return false; }
+void Seat::set_text_input_cursor_rect(const Rect&) {}
+void Seat::set_surrounding_text(const std::string&, int32_t, int32_t) {}
+
+// ---- Keymap -----------------------------------------------------------------
+
+struct Keymap::Impl {};
+
+Keymap::Keymap(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
+Keymap::~Keymap() = default;
+std::shared_ptr<const Keymap> Keymap::from_string(const std::string&) { return nullptr; }
+std::shared_ptr<const Keymap> Keymap::from_names(const std::string&, const std::string&, const std::string&) {
+    return nullptr;
+}
+uint32_t Keymap::keysym(uint32_t, uint32_t, uint32_t) const { return 0; }
+std::string Keymap::utf8(uint32_t, uint32_t, uint32_t) const { return {}; }
+bool Keymap::key_for_keysym(uint32_t, uint32_t*, uint32_t*, uint32_t) const { return false; }
+bool Keymap::repeats(uint32_t) const { return false; }
+uint32_t Keymap::layout_count() const { return 0; }
+std::string Keymap::layout_name(uint32_t) const { return {}; }
+uint32_t Keymap::decode_modifiers(uint32_t, uint32_t, uint32_t, uint32_t) const { return 0; }
+uint32_t Keymap::keysym_to_utf32(uint32_t) { return 0; }
+std::string Keymap::keysym_name(uint32_t) { return {}; }
+void* Keymap::xkb_keymap_ptr() const { return nullptr; }
+
+// ---- Window -----------------------------------------------------------------
+
+struct Window::Impl {};
+
+Window::Window(SurfaceId id, wl_surface* surface, xdg_surface* xdg_surf, xdg_toplevel* toplevel,
+               const WindowConfig&, Display* display)
+    : id_(id), surface_(surface), xdg_surf_(xdg_surf), toplevel_(toplevel), display_(display) {}
+Window::~Window() = default;
+WindowSnapshot Window::snapshot() const {
+    WindowSnapshot snap;
+    snap.id = id_;
+    return snap;
+}
+void Window::map() {}
+void Window::unmap() {}
+bool Window::mapped() const { return false; }
+void Window::set_title(const std::string&) {}
+void Window::set_app_id(const std::string&) {}
+void Window::set_min_size(int32_t, int32_t) {}
+void Window::set_max_size(int32_t, int32_t) {}
+void Window::set_maximized(bool) {}
+void Window::set_fullscreen(bool, Output*) {}
+void Window::set_minimized() {}
+void Window::set_server_side_decorations(bool) {}
+bool Window::set_icon(int32_t, int32_t, const uint8_t*) { return false; }
+bool Window::has_icon_protocol() const { return false; }
+bool Window::set_logical_size(int32_t, int32_t) { return false; }
+void Window::set_buffer_scale(int32_t) {}
+void Window::set_window_geometry(const Rect&) {}
+void Window::start_move(Seat&, uint32_t) {}
+void Window::start_resize(Seat&, uint32_t, ResizeEdge) {}
+void Window::show_window_menu(Seat&, uint32_t, int32_t, int32_t) {}
+void Window::attach_buffer(wl_buffer*, int32_t, int32_t) {}
+void Window::damage(int32_t, int32_t, int32_t, int32_t) {}
+void Window::commit() {}
+void Window::handle_toplevel_configure(int32_t, int32_t, const uint32_t*, size_t) {}
+void Window::handle_toplevel_close() {}
+void Window::handle_configure_bounds(int32_t, int32_t) {}
+void Window::handle_wm_capabilities(const uint32_t*, size_t) {}
+void Window::handle_xdg_surface_configure(uint32_t) {}
+void Window::handle_decoration_mode(uint32_t) {}
+void Window::handle_preferred_scale(uint32_t) {}
+void Window::handle_preferred_buffer_scale(int32_t) {}
+void Window::handle_surface_enter(void*) {}
+void Window::handle_surface_leave(void*) {}
+void Window::detach() {}
 
 // ---- Shared memory ----------------------------------------------------------
 

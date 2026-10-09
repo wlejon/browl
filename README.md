@@ -6,10 +6,14 @@
 A small C++20 library for the client side of the Wayland shell protocols
 that desktop components speak: panels, docks and launchers (layer shell),
 their menus (xdg popups), taskbars (foreign toplevel management), lock
-screens (session lock), screenshot tools (screencopy), and idle handling.
-Objects are RAII wrappers; what the compositor says arrives as immutable
-snapshots and as events in a thread-safe queue you drain when you like.
-It needs nothing but `libwayland-client`.
+screens (session lock), screenshot tools (screencopy), and idle handling;
+and the application side: xdg-shell windows (decorations, scale, viewport,
+icons, activation, presentation feedback) and seat input (pointer, keyboard
+through xkbcommon, touch, text input, clipboard, primary selection, drag
+and drop, cursors). Objects are RAII wrappers; what the compositor says
+arrives as immutable snapshots and as events in a thread-safe queue you
+drain when you like. It needs `libwayland-client`, `libwayland-cursor` and
+`libxkbcommon`.
 
 ## Where it sits
 
@@ -38,20 +42,31 @@ objects.
 | Protocol | Interface | Bound up to |
 | :--- | :--- | :--- |
 | Layer shell | `zwlr_layer_shell_v1` | v4 |
-| XDG shell (popups) | `xdg_wm_base` | v5 |
+| XDG shell (windows, popups) | `xdg_wm_base` | v6 |
+| XDG decoration | `zxdg_decoration_manager_v1` | v1 |
+| XDG output | `zxdg_output_manager_v1` | v3 |
+| XDG activation | `xdg_activation_v1` | v1 |
+| XDG toplevel icon | `xdg_toplevel_icon_manager_v1` | v1 |
+| Viewporter, fractional scale | `wp_viewporter`, `wp_fractional_scale_manager_v1` | v1, v1 |
+| Presentation time | `wp_presentation` | v2 |
+| Data device (clipboard, DnD) | `wl_data_device_manager` | v3 |
+| Primary selection | `zwp_primary_selection_device_manager_v1` | v1 |
+| Text input | `zwp_text_input_manager_v3` | v1 |
+| Cursor shape | `wp_cursor_shape_manager_v1` | v1 |
+| Pointer constraints, relative pointer | `zwp_pointer_constraints_v1`, `zwp_relative_pointer_manager_v1` | v1, v1 |
 | Foreign toplevel management | `zwlr_foreign_toplevel_manager_v1` | v3 |
 | Session lock | `ext_session_lock_manager_v1` | v1 |
 | Screencopy | `zwlr_screencopy_manager_v1` | v3 (shm buffers) |
 | Idle inhibit | `zwp_idle_inhibit_manager_v1` | v1 |
 | Idle notify | `ext_idle_notifier_v1` | v1 |
-| Core | `wl_compositor`, `wl_shm`, `wl_output`, `wl_seat` | v4, v1, v4, v7 |
+| Core | `wl_compositor`, `wl_shm`, `wl_output`, `wl_seat` | v6, v1, v4, v9 |
 
 ## Building
 
 ### Prerequisites
 
 - **CMake 3.24+** and a **C++20** compiler (GCC 12+, Clang 15+, Apple Clang, MSVC 2022+).
-- **Linux**: `libwayland-client` and `wayland-scanner` (Debian/Ubuntu: `libwayland-dev libwayland-bin`; Arch: `wayland`).
+- **Linux**: `libwayland-client`, `libwayland-cursor`, `libxkbcommon` and `wayland-scanner` (Debian/Ubuntu: `libwayland-dev libwayland-bin libxkbcommon-dev`; Arch: `wayland libxkbcommon`).
   The test suite also requires `libwayland-server` (part of `libwayland-dev`) and, for real-compositor integration tests, `sway`.
 - **Windows / macOS**: No external Wayland libraries required.
 
@@ -134,7 +149,9 @@ for (auto& ev : display->events().drain()) {
 | `screencopy.h` | `ScreenCopyManager`, `ScreenCopyFrame`: output or region capture into shm, flags, damage, timestamps |
 | `idle_inhibit.h`, `idle_notify.h` | `IdleInhibitor`, `IdleNotification` (idled / resumed) |
 | `shm_pool.h` | `ShmPool`, `ShmBuffer`: memfd-backed `wl_shm` pools that grow without invalidating existing buffers |
-| `output.h`, `seat.h` | `Output`, `Seat`: snapshots of what the compositor announces |
+| `window.h` | `Window`: xdg toplevel with title, app id, size limits, decorations, maximize/fullscreen, icon, scale (fractional or integer), viewport, map/unmap, configure acks |
+| `keymap.h` | `Keymap`: the seat's xkb keymap, thread-safe keysym and modifier queries |
+| `output.h`, `seat.h` | `Output`, `Seat`: snapshots of what the compositor announces; seat input (pointer, keyboard, touch, text input), cursors, selections, drag and drop |
 | `events.h`, `event_queue.h` | Snapshot types, the `ShellEvent` variant, `EventQueue` |
 | `browl.h` | Master umbrella header |
 
@@ -153,9 +170,11 @@ and ctest reports them as skipped, never passed.
 | :--- | :--- | :--- | :--- |
 | `test_event_queue` | everywhere | — | Ordering, timed waits, wake hook, four producers against a draining consumer |
 | `test_unavailable` | Windows, macOS | — | `connect()` fails with `unavailable_reason()` |
-| `test_display`, `test_layer_surface`, `test_popup`, `test_foreign_toplevel`, `test_session_lock`, `test_idle`, `test_screencopy`, `test_shm_pool` | Linux | `HeadlessCompositor` (test double) | What browl puts on the wire and how it turns scripted events into snapshots and queue entries; for `test_shm_pool`, the pool's own memory |
+| `test_display`, `test_layer_surface`, `test_popup`, `test_foreign_toplevel`, `test_session_lock`, `test_idle`, `test_screencopy`, `test_shm_pool`, `test_window`, `test_input`, `test_selection` | Linux | `HeadlessCompositor` (test double) | What browl puts on the wire and how it turns scripted events into snapshots and queue entries; for `test_shm_pool`, the pool's own memory |
 | `test_sway_shell` | Linux with sway | headless sway | Sizes sway configures (output size; the space an exclusive zone leaves), where it places a popup and slides it back on screen, and the composited pixels read back with screencopy (whole output and a region) |
 | `test_sway_toplevel` | Linux with sway | headless sway + a second client's window | The window as sway reports it (title, app id, output, activation, retitle); fullscreen and close requested through browl arriving at the window |
+| `test_keymap` | Linux | — | Keymap compiled from text: keysyms, modifiers, compose |
+| `test_sway_window` | Linux with sway | headless sway + a virtual keyboard + a second browl client | Configured size, decorations (server-side; client-side when floating), keyboard focus and keys through sway's keymap, clipboard and primary selection between clients, presentation feedback, activation tokens raising a window, unmap/map |
 | `test_sway_lock_idle` | Linux with sway | headless sway | Idled after the timeout and not while a visible surface inhibits; the lock surface is what the output shows; a second lock is refused while one holds and accepted after unlock; dropping a locked lock does not reveal the desktop |
 | `browl_test_api` | Linux (when API enabled) | `HeadlessCompositor` | Bronze JavaScript bindings (`browl_api`) and garbage collector stress testing |
 

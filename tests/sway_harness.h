@@ -22,6 +22,9 @@ struct wl_buffer;
 struct xdg_wm_base;
 struct xdg_surface;
 struct xdg_toplevel;
+struct wl_seat;
+struct zwp_virtual_keyboard_manager_v1;
+struct zwp_virtual_keyboard_v1;
 
 namespace swaytest {
 
@@ -119,6 +122,29 @@ private:
     wl_buffer* buffer_ = nullptr;
     void* map_ = nullptr;
     size_t map_size_ = 0;
+};
+
+// A virtual keyboard (zwp_virtual_keyboard_v1, sway_harness_input.cpp) on a
+// connection of its own. The headless sway has no input devices, so its
+// seat has no keyboard: no keyboard focus, no input serials, no selection
+// for anyone. Creating this gives the seat a keyboard with the "us" keymap;
+// key() types on whatever window has focus.
+class VirtualKeyboard {
+public:
+    ~VirtualKeyboard();
+    bool connect(const std::string& name, std::string* error);
+    void key(uint32_t key, bool pressed);
+    int roundtrip();
+
+private:
+    struct wl_display* display_ = nullptr;
+    struct wl_registry* registry_ = nullptr;
+    struct wl_seat* seat_ = nullptr;
+    struct zwp_virtual_keyboard_manager_v1* manager_ = nullptr;
+    struct zwp_virtual_keyboard_v1* keyboard_ = nullptr;
+    uint32_t time_ = 1;
+
+    friend struct VirtualKeyboardRegistry;
 };
 
 }  // namespace swaytest

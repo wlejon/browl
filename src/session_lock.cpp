@@ -1,6 +1,8 @@
 #include "browl/session_lock.h"
 
 #include "browl/display.h"
+
+#include "app_globals.h"
 #include "browl/output.h"
 #include "ext-session-lock-v1-client-protocol.h"
 
@@ -134,12 +136,18 @@ SessionLockSurface::SessionLockSurface(SurfaceId id, OutputId output_id, wl_surf
       surface_(surface),
       lock_surface_(lock_surface),
       display_(display) {
+    if (display_) {
+        display_->app_globals().register_surface(surface_, id_);
+    }
     if (lock_surface_) {
         ext_session_lock_surface_v1_add_listener(lock_surface_, &surface_listener, this);
     }
 }
 
 SessionLockSurface::~SessionLockSurface() {
+    if (display_ && surface_) {
+        display_->app_globals().unregister_surface(surface_);
+    }
     if (lock_surface_) {
         ext_session_lock_surface_v1_destroy(lock_surface_);
     }

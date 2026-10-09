@@ -8,6 +8,8 @@
 #include <vector>
 
 struct wl_output;
+struct zxdg_output_manager_v1;
+struct zxdg_output_v1;
 
 namespace browl {
 
@@ -35,6 +37,17 @@ public:
     const Size& physical_size_mm() const { return physical_size_mm_; }
     const std::vector<OutputMode>& modes() const { return modes_; }
     const OutputMode& current_mode() const { return current_mode_; }
+    const std::string& description() const { return description_; }
+    /// The output's place and size in the compositor's logical space
+    /// (zxdg_output_v1 when the compositor has it; else derived from the
+    /// position, current mode, scale and transform).
+    Rect logical() const;
+
+    // Internal: follow the output's zxdg_output_v1 (logical geometry).
+    void attach_xdg_output(zxdg_output_manager_v1* manager);
+    void handle_logical_position(int32_t x, int32_t y);
+    void handle_logical_size(int32_t width, int32_t height);
+    void handle_xdg_done();
 
     // Internal callbacks from wl_output_listener
     void handle_geometry(int32_t x, int32_t y, int32_t physical_width, int32_t physical_height,
@@ -62,6 +75,9 @@ private:
     int32_t scale_ = 1;
     std::vector<OutputMode> modes_;
     OutputMode current_mode_;
+    zxdg_output_v1* xdg_output_ = nullptr;
+    Rect logical_;
+    bool has_logical_ = false;
 };
 
 }  // namespace browl

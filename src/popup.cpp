@@ -1,6 +1,8 @@
 #include "browl/popup.h"
 
 #include "browl/display.h"
+
+#include "app_globals.h"
 #include "browl/seat.h"
 #include "xdg-shell-client-protocol.h"
 
@@ -127,6 +129,9 @@ void Positioner::set_parent_configure(uint32_t serial) {
 Popup::Popup(SurfaceId id, wl_surface* surface, xdg_surface* xdg_surf,
              xdg_popup* popup, Display* display)
     : id_(id), surface_(surface), xdg_surf_(xdg_surf), popup_(popup), display_(display) {
+    if (display_) {
+        display_->app_globals().register_surface(surface_, id_);
+    }
     if (xdg_surf_) {
         xdg_surface_add_listener(xdg_surf_, &surface_listener, this);
     }
@@ -136,6 +141,9 @@ Popup::Popup(SurfaceId id, wl_surface* surface, xdg_surface* xdg_surf,
 }
 
 Popup::~Popup() {
+    if (display_ && surface_) {
+        display_->app_globals().unregister_surface(surface_);
+    }
     if (popup_) {
         xdg_popup_destroy(popup_);
     }

@@ -20,8 +20,13 @@ static void surface_destroy_req(struct wl_client* /*client*/, struct wl_resource
     wl_resource_destroy(resource);
 }
 
-static void surface_attach_req(struct wl_client* /*client*/, struct wl_resource* /*resource*/,
-                               struct wl_resource* /*buffer*/, int32_t /*x*/, int32_t /*y*/) {}
+static void surface_attach_req(struct wl_client* /*client*/, struct wl_resource* resource,
+                               struct wl_resource* buffer, int32_t /*x*/, int32_t /*y*/) {
+    auto* comp = static_cast<HeadlessCompositor*>(wl_resource_get_user_data(resource));
+    if (comp && !buffer && resource == comp->window_surface_) {
+        ++comp->app_.null_attaches;
+    }
+}
 
 static void surface_damage_req(struct wl_client* /*client*/, struct wl_resource* /*resource*/,
                                int32_t /*x*/, int32_t /*y*/, int32_t /*width*/, int32_t /*height*/) {}
@@ -39,17 +44,38 @@ static void surface_commit_req(struct wl_client* /*client*/, struct wl_resource*
     auto* comp = static_cast<HeadlessCompositor*>(wl_resource_get_user_data(resource));
     if (comp) {
         comp->layer_surface_committed_ = true;
+        if (resource == comp->window_surface_) {
+            ++comp->app_.commits;
+        }
     }
 }
 
 static void surface_set_buffer_transform_req(struct wl_client* /*client*/, struct wl_resource* /*resource*/,
                                              int32_t /*transform*/) {}
 
-static void surface_set_buffer_scale_req(struct wl_client* /*client*/, struct wl_resource* /*resource*/,
-                                         int32_t /*scale*/) {}
+static void surface_set_buffer_scale_req(struct wl_client* /*client*/, struct wl_resource* resource,
+                                         int32_t scale) {
+    auto* comp = static_cast<HeadlessCompositor*>(wl_resource_get_user_data(resource));
+    if (comp && resource == comp->window_surface_) {
+        comp->app_.buffer_scale = scale;
+    }
+}
 
 static void surface_damage_buffer_req(struct wl_client* /*client*/, struct wl_resource* /*resource*/,
                                       int32_t /*x*/, int32_t /*y*/, int32_t /*width*/, int32_t /*height*/) {}
+
+static void surface_offset_req(struct wl_client* /*client*/, struct wl_resource* /*resource*/,
+                               int32_t /*x*/, int32_t /*y*/) {}
+
+static void surface_destroyed(struct wl_resource* resource) {
+    auto* comp = static_cast<HeadlessCompositor*>(wl_resource_get_user_data(resource));
+    if (comp && comp->window_surface_ == resource) {
+        comp->window_surface_ = nullptr;
+    }
+    if (comp && comp->surface_resource_ == resource) {
+        comp->surface_resource_ = nullptr;
+    }
+}
 
 static const struct wl_surface_interface surface_interface = {
     .destroy = surface_destroy_req,
@@ -62,6 +88,7 @@ static const struct wl_surface_interface surface_interface = {
     .set_buffer_transform = surface_set_buffer_transform_req,
     .set_buffer_scale = surface_set_buffer_scale_req,
     .damage_buffer = surface_damage_buffer_req,
+    .offset = surface_offset_req,
 };
 
 static void compositor_create_surface(struct wl_client* client, struct wl_resource* resource,
@@ -69,7 +96,7 @@ static void compositor_create_surface(struct wl_client* client, struct wl_resour
     auto* comp = static_cast<HeadlessCompositor*>(wl_resource_get_user_data(resource));
     struct wl_resource* surf_res =
         wl_resource_create(client, &wl_surface_interface, wl_resource_get_version(resource), id);
-    wl_resource_set_implementation(surf_res, &surface_interface, comp, nullptr);
+    wl_resource_set_implementation(surf_res, &surface_interface, comp, surface_destroyed);
     if (comp) {
         comp->surface_resource_ = surf_res;
     }
@@ -114,22 +141,6 @@ static void bind_output(struct wl_client* client, void* data, uint32_t version, 
     }
 }
 
-// ============================================================================
-// Seat Implementation
-// ============================================================================
-
-static void bind_seat(struct wl_client* client, void* data, uint32_t version, uint32_t id) {
-    auto* comp = static_cast<HeadlessCompositor*>(data);
-    struct wl_resource* res = wl_resource_create(client, &wl_seat_interface, version, id);
-    wl_resource_set_implementation(res, nullptr, data, nullptr);
-    comp->seat_resource_ = res;
-
-    wl_seat_send_capabilities(res, WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD);
-    if (version >= 2) {
-        wl_seat_send_name(res, "seat0");
-    }
-}
-
 }  // namespace
 
 HeadlessCompositor::HeadlessCompositor() {
@@ -147,12 +158,13 @@ HeadlessCompositor::~HeadlessCompositor() {
 }
 
 void HeadlessCompositor::init_globals() {
-    compositor_global_ = wl_global_create(display_, &wl_compositor_interface, 4, this, bind_compositor);
+    compositor_global_ = wl_global_create(display_, &wl_compositor_interface, 6, this, bind_compositor);
     output_global_ = wl_global_create(display_, &wl_output_interface, 4, this, bind_output);
-    seat_global_ = wl_global_create(display_, &wl_seat_interface, 7, this, bind_seat);
 
+    init_input_globals();  // wl_seat and the data devices
     init_shell_globals();
     init_service_globals();
+    init_app_globals();
 }
 
 int HeadlessCompositor::create_client_fd() {

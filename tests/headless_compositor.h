@@ -25,6 +25,65 @@ struct CompositorToplevelState {
     bool fullscreen = false;
 };
 
+// What browl asked of the application-window globals (windows, decorations,
+// viewport, presentation, activation, icon, cursor, text input). Read it
+// through HeadlessCompositor::app_state(), a copy taken under the lock.
+struct CompositorAppState {
+    // xdg_toplevel (the newest window)
+    int xdg_surfaces_created = 0;
+    int toplevels_created = 0;
+    int toplevels_destroyed = 0;
+    std::string title;
+    std::string app_id;
+    int32_t min_width = 0, min_height = 0, max_width = 0, max_height = 0;
+    bool maximized = false;
+    bool fullscreen = false;
+    bool minimized = false;
+    uint32_t last_ack_serial = 0;
+    int32_t geometry_width = 0, geometry_height = 0;
+    // wl_surface
+    int commits = 0;
+    int null_attaches = 0;
+    int32_t buffer_scale = 1;
+    // zxdg_toplevel_decoration_v1: the mode browl asked for (0: none yet)
+    uint32_t decoration_mode_requested = 0;
+    int decorations_created = 0;
+    // wp_viewport
+    bool viewport_created = false;
+    int32_t viewport_width = 0, viewport_height = 0;
+    bool fractional_created = false;
+    // wp_presentation
+    int feedbacks_requested = 0;
+    // xdg_activation_v1
+    int tokens_requested = 0;
+    std::string token_app_id;
+    uint32_t token_serial = 0;
+    bool token_has_surface = false;
+    std::string activated_token;
+    // xdg_toplevel_icon_v1
+    int icon_buffers_added = 0;
+    int32_t icon_buffer_size = 0;
+    uint32_t icon_first_pixel = 0;  // the first ARGB word of the last icon buffer
+    int icons_set = 0;
+    int icons_cleared = 0;
+    // cursor
+    uint32_t cursor_shape = 0;
+    uint32_t cursor_shape_serial = 0;
+    int cursor_hidden = 0;  // wl_pointer.set_cursor with a null surface
+    // zwp_text_input_v3
+    bool text_input_enabled = false;
+    uint32_t text_input_purpose = 0;
+    uint32_t text_input_hints = 0;
+    int text_input_commits = 0;
+};
+
+// One selection source a client offered (clipboard or primary).
+struct CompositorSource {
+    struct wl_resource* resource = nullptr;  // null once the client destroyed it
+    std::vector<std::string> mimes;
+    bool primary = false;
+};
+
 class HeadlessCompositor {
 public:
     HeadlessCompositor();
@@ -93,6 +152,47 @@ public:
     bool screencopy_frame_created() const;
     bool screencopy_copy_received() const;
 
+    // Application windows (headless_compositor_app.cpp). configure_window
+    // sends the whole sequence (bounds, capabilities, decoration mode when
+    // `decoration_mode` != 0, toplevel configure, xdg_surface configure) and
+    // returns the serial.
+    uint32_t configure_window(int32_t width, int32_t height, const std::vector<uint32_t>& states,
+                              int32_t bounds_width = 0, int32_t bounds_height = 0,
+                              const std::vector<uint32_t>& wm_caps = {}, uint32_t decoration_mode = 0);
+    void close_window();
+    void send_surface_enter();  // the window's surface enters the output
+    void send_surface_leave();
+    void send_preferred_buffer_scale(int32_t scale);
+    void send_fractional_scale(uint32_t scale120);
+    void send_presented(uint64_t time_ns, uint32_t refresh_ns, uint64_t seq, uint32_t flags);
+    void send_discarded();
+    void send_xdg_output_logical(int32_t x, int32_t y, int32_t width, int32_t height);
+    CompositorAppState app_state() const;
+
+    // Input (headless_compositor_input.cpp). Events go to the newest
+    // pointer / keyboard / touch / text input, about the window's surface.
+    void send_keymap(const std::string& layout, const std::string& variant = "");
+    void send_keyboard_enter(const std::vector<uint32_t>& keys = {});
+    void send_keyboard_leave();
+    void send_key(uint32_t key, bool pressed, uint32_t time_ms = 0);
+    void send_modifiers(uint32_t depressed, uint32_t latched, uint32_t locked, uint32_t group);
+    void send_repeat_info(int32_t rate, int32_t delay_ms);
+    void send_pointer_enter(double x, double y);
+    void send_pointer_leave();
+    void send_pointer_motion(double x, double y, uint32_t time_ms = 0);
+    void send_pointer_button(uint32_t button, bool pressed);
+    // axis_source, value120 + axis on each nonzero axis, then frame.
+    void send_pointer_scroll(int32_t value120_x, int32_t value120_y, double dx, double dy,
+                             uint32_t source);
+    void send_touch_down(int32_t id, double x, double y);
+    void send_touch_motion(int32_t id, double x, double y);
+    void send_touch_up(int32_t id);
+    void send_text_input_enter();
+    void send_text_input_done(const std::string& preedit, int32_t begin, int32_t end,
+                              const std::string& commit, uint32_t delete_before, uint32_t delete_after);
+    uint32_t last_serial() const;
+    bool input_bound() const;  // pointer and keyboard were requested
+
     // Inspection getters
     struct wl_display* server_display() const { return display_; }
 
@@ -100,6 +200,28 @@ public:
     void init_globals();
     void init_shell_globals();
     void init_service_globals();
+    void init_app_globals();
+    void init_input_globals();
+
+    // Application-window and input state (the _app / _input files).
+    CompositorAppState app_;
+    struct wl_resource* window_surface_ = nullptr;
+    struct wl_resource* xdg_surface_resource_ = nullptr;
+    struct wl_resource* toplevel_resource_ = nullptr;
+    struct wl_resource* decoration_resource_ = nullptr;
+    struct wl_resource* fractional_resource_ = nullptr;
+    struct wl_resource* xdg_output_resource_ = nullptr;
+    std::vector<struct wl_resource*> feedbacks_;
+    struct wl_resource* pointer_resource_ = nullptr;
+    struct wl_resource* keyboard_resource_ = nullptr;
+    struct wl_resource* touch_resource_ = nullptr;
+    struct wl_resource* text_input_resource_ = nullptr;
+    std::vector<struct wl_resource*> data_devices_;
+    std::vector<struct wl_resource*> primary_devices_;
+    std::vector<std::unique_ptr<CompositorSource>> sources_;
+    CompositorSource* clipboard_selection_ = nullptr;
+    CompositorSource* primary_selection_ = nullptr;
+    int next_token_ = 1;
 
     struct wl_display* display_ = nullptr;
     struct wl_client* client_ = nullptr;

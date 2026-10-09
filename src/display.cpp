@@ -10,6 +10,9 @@
 #include "browl/seat.h"
 #include "browl/session_lock.h"
 #include "browl/shm_pool.h"
+#include "browl/window.h"
+
+#include "app_globals.h"
 
 #include "ext-idle-notify-v1-client-protocol.h"
 #include "ext-session-lock-v1-client-protocol.h"
@@ -61,9 +64,16 @@ static const struct xdg_wm_base_listener xdg_base_listener = {
 
 }  // namespace
 
-Display::Display(wl_display* display) : display_(display) {}
+Display::Display(wl_display* display)
+    : display_(display), app_(std::make_unique<AppGlobals>()) {
+    app_->display = this;
+}
 
 Display::~Display() {
+    // Windows and pending requests first (they use the seats, outputs and
+    // globals), then seats and outputs, then the globals.
+    app_->teardown();
+
     if (toplevel_manager_instance_) {
         toplevel_manager_instance_->detach();
         toplevel_manager_instance_.reset();
@@ -84,6 +94,8 @@ Display::~Display() {
         s->detach();
     }
     seats_.clear();
+
+    app_->destroy_globals();
 
     if (idle_notifier_) {
         ext_idle_notifier_v1_destroy(idle_notifier_);
@@ -404,7 +416,8 @@ uint64_t Display::next_notification_id() {
 
 void Display::handle_global(uint32_t name, const char* interface, uint32_t version) {
     if (std::strcmp(interface, wl_compositor_interface.name) == 0) {
-        uint32_t bind_ver = std::min(version, 4u);
+        // v6: wl_surface.preferred_buffer_scale (a window's integer scale).
+        uint32_t bind_ver = std::min(version, 6u);
         compositor_ = static_cast<wl_compositor*>(
             wl_registry_bind(registry_, name, &wl_compositor_interface, bind_ver));
     } else if (std::strcmp(interface, wl_subcompositor_interface.name) == 0) {
@@ -420,22 +433,28 @@ void Display::handle_global(uint32_t name, const char* interface, uint32_t versi
         auto* out = static_cast<wl_output*>(
             wl_registry_bind(registry_, name, &wl_output_interface, bind_ver));
         auto output = std::make_shared<Output>(name, out, this);
+        output->attach_xdg_output(app_->xdg_output_manager);
         outputs_.push_back(output);
         event_queue_.push(OutputAddedEvent{output->snapshot()});
     } else if (std::strcmp(interface, wl_seat_interface.name) == 0) {
-        uint32_t bind_ver = std::min(version, 7u);
+        // v8: axis_value120; v9: axis_relative_direction.
+        uint32_t bind_ver = std::min(version, 9u);
         auto* st = static_cast<wl_seat*>(
             wl_registry_bind(registry_, name, &wl_seat_interface, bind_ver));
         auto seat = std::make_shared<Seat>(name, st, this);
         seats_.push_back(seat);
+        if (input_enabled_) {
+            seat->enable_input();
+        }
         event_queue_.push(SeatAddedEvent{seat->snapshot()});
     } else if (std::strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
         uint32_t bind_ver = std::min(version, 4u);
         layer_shell_ = static_cast<zwlr_layer_shell_v1*>(
             wl_registry_bind(registry_, name, &zwlr_layer_shell_v1_interface, bind_ver));
     } else if (std::strcmp(interface, xdg_wm_base_interface.name) == 0) {
-        uint32_t bind_ver = std::min(version, 5u);
-        xdg_wm_base_ = static_cast<xdg_wm_base*>(
+        // v4: configure_bounds; v5: wm_capabilities; v6: the suspended state.
+        uint32_t bind_ver = std::min(version, 6u);
+        xdg_wm_base_ =static_cast<xdg_wm_base*>(
             wl_registry_bind(registry_, name, &xdg_wm_base_interface, bind_ver));
         if (xdg_wm_base_) {
             xdg_wm_base_add_listener(xdg_wm_base_, &xdg_base_listener, this);
@@ -460,6 +479,8 @@ void Display::handle_global(uint32_t name, const char* interface, uint32_t versi
         uint32_t bind_ver = std::min(version, 1u);
         idle_notifier_ = static_cast<ext_idle_notifier_v1*>(
             wl_registry_bind(registry_, name, &ext_idle_notifier_v1_interface, bind_ver));
+    } else {
+        app_->bind(registry_, name, interface, version);
     }
 }
 

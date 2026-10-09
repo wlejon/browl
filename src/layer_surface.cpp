@@ -1,6 +1,8 @@
 #include "browl/layer_surface.h"
 
 #include "browl/display.h"
+
+#include "app_globals.h"
 #include "browl/popup.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
@@ -43,6 +45,9 @@ LayerSurface::LayerSurface(SurfaceId id, wl_surface* surface,
     snapshot_.margins = config.margins;
     snapshot_.exclusive_zone = config.exclusive_zone;
     snapshot_.keyboard_interactivity = config.keyboard_interactivity;
+    if (display_) {
+        display_->app_globals().register_surface(surface_, id_);
+    }
 
     if (layer_surf_) {
         zwlr_layer_surface_v1_add_listener(layer_surf_, &layer_listener, this);
@@ -65,6 +70,9 @@ LayerSurface::LayerSurface(SurfaceId id, wl_surface* surface,
 }
 
 LayerSurface::~LayerSurface() {
+    if (display_ && surface_) {
+        display_->app_globals().unregister_surface(surface_);
+    }
     if (layer_surf_) {
         zwlr_layer_surface_v1_destroy(layer_surf_);
     }

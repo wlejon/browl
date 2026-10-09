@@ -76,6 +76,20 @@ set(BROWL_PROTOCOLS
     wlr-layer-shell-unstable-v1
     wlr-screencopy-unstable-v1
     xdg-shell
+    # Application windows and their input
+    cursor-shape-v1
+    fractional-scale-v1
+    pointer-constraints-unstable-v1
+    presentation-time
+    primary-selection-unstable-v1
+    relative-pointer-unstable-v1
+    tablet-v2  # only because cursor-shape-v1 names zwp_tablet_tool_v2
+    text-input-unstable-v3
+    viewporter
+    xdg-activation-v1
+    xdg-decoration-unstable-v1
+    xdg-output-unstable-v1
+    xdg-toplevel-icon-v1
 )
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -83,6 +97,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_package(PkgConfig REQUIRED)
     find_package(Threads REQUIRED)
     pkg_check_modules(WAYLAND_CLIENT REQUIRED IMPORTED_TARGET wayland-client)
+    # Keymaps and key interpretation (Keymap, the seat's keyboard), and the
+    # XCursor theme fallback for compositors without wp_cursor_shape_v1.
+    pkg_check_modules(XKBCOMMON REQUIRED IMPORTED_TARGET xkbcommon)
+    pkg_check_modules(WAYLAND_CURSOR REQUIRED IMPORTED_TARGET wayland-cursor)
     find_program(WAYLAND_SCANNER wayland-scanner REQUIRED)
 
     set(PROTO_DIR ${CMAKE_CURRENT_BINARY_DIR}/protocols)
@@ -114,7 +132,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         src/foreign_toplevel.cpp
         src/session_lock.cpp
         src/idle.cpp
-        src/screencopy.cpp)
+        src/screencopy.cpp
+        src/display_app.cpp
+        src/window.cpp
+        src/keymap.cpp
+        src/seat_pointer.cpp
+        src/seat_keyboard.cpp
+        src/seat_touch.cpp
+        src/seat_data_device.cpp
+        src/seat_text_input.cpp)
     # The generated protocol code is a separate object library so the
     # library's warning flags apply to its own sources only.
     add_library(browl_protocols OBJECT ${BROWL_PROTO_SOURCES} ${BROWL_PROTO_HEADERS})
@@ -124,7 +150,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_library(browl STATIC ${BROWL_SOURCES} $<TARGET_OBJECTS:browl_protocols>)
     add_dependencies(browl browl_protocols)
     target_include_directories(browl PRIVATE ${PROTO_DIR})
-    target_link_libraries(browl PUBLIC PkgConfig::WAYLAND_CLIENT Threads::Threads)
+    target_link_libraries(browl PUBLIC PkgConfig::WAYLAND_CLIENT Threads::Threads
+                                PRIVATE PkgConfig::XKBCOMMON PkgConfig::WAYLAND_CURSOR)
 else()
     set(BROWL_LINUX OFF)
     add_library(browl STATIC src/unavailable/browl.cpp)

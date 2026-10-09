@@ -65,22 +65,40 @@ add_library(headless_compositor STATIC
     headless_compositor.cpp
     headless_compositor_shell.cpp
     headless_compositor_services.cpp
+    headless_compositor_app.cpp
+    headless_compositor_input.cpp
     ${SERVER_PROTO_HEADERS})
 target_include_directories(headless_compositor PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${SERVER_PROTO_DIR} ${PROTO_DIR})
-target_link_libraries(headless_compositor PUBLIC browl::browl PkgConfig::WAYLAND_SERVER Threads::Threads)
+target_link_libraries(headless_compositor PUBLIC browl::browl PkgConfig::WAYLAND_SERVER Threads::Threads
+                                          PkgConfig::XKBCOMMON)
 
 foreach(_test test_display test_layer_surface test_popup test_foreign_toplevel test_session_lock
-              test_idle test_screencopy test_shm_pool)
+              test_idle test_screencopy test_shm_pool test_window test_input test_selection)
     browl_test(${_test} SOURCES ${_test}.cpp LIBS headless_compositor)
 endforeach()
 
+# Keymap needs no compositor, only xkbcommon and its data.
+browl_test(test_keymap SOURCES test_keymap.cpp LIBS PkgConfig::XKBCOMMON Threads::Threads)
+
 # Against a real compositor. Each test gets its own sway, so a lock or a
-# fullscreen window never leaks from one test into the next.
-add_library(sway_harness STATIC sway_harness.cpp)
-target_include_directories(sway_harness PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${PROTO_DIR})
-target_link_libraries(sway_harness PUBLIC browl::browl)
+# fullscreen window never leaks from one test into the next. The harness
+# also speaks zwp_virtual_keyboard_v1 (test-only, tests/protocols/) to give
+# the input-less headless seat a keyboard, hence keyboard focus and serials.
+set(_vk_xml ${CMAKE_CURRENT_SOURCE_DIR}/protocols/virtual-keyboard-unstable-v1.xml)
+set(_vk_header ${SERVER_PROTO_DIR}/virtual-keyboard-unstable-v1-client-protocol.h)
+set(_vk_code ${SERVER_PROTO_DIR}/virtual-keyboard-unstable-v1-protocol.c)
+add_custom_command(
+    OUTPUT ${_vk_header} ${_vk_code}
+    COMMAND ${WAYLAND_SCANNER} client-header ${_vk_xml} ${_vk_header}
+    COMMAND ${WAYLAND_SCANNER} private-code ${_vk_xml} ${_vk_code}
+    DEPENDS ${_vk_xml}
+    COMMENT "Generating Wayland client protocol: virtual-keyboard-unstable-v1 (tests)"
+    VERBATIM)
+add_library(sway_harness STATIC sway_harness.cpp sway_harness_input.cpp ${_vk_code} ${_vk_header})
+target_include_directories(sway_harness PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${PROTO_DIR} ${SERVER_PROTO_DIR})
+target_link_libraries(sway_harness PUBLIC browl::browl PkgConfig::XKBCOMMON)
 browl_warnings(sway_harness)
-foreach(_test test_sway_shell test_sway_toplevel test_sway_lock_idle)
+foreach(_test test_sway_shell test_sway_toplevel test_sway_lock_idle test_sway_window)
     add_executable(${_test} ${_test}.cpp)
     target_link_libraries(${_test} PRIVATE sway_harness)
     browl_warnings(${_test})

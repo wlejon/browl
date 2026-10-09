@@ -26,6 +26,8 @@ namespace browl {
 
 class Output;
 class Seat;
+class Window;
+struct WindowConfig;
 class LayerSurface;
 struct LayerSurfaceConfig;
 class Positioner;
@@ -83,6 +85,55 @@ public:
     bool has_idle_inhibit() const;
     bool has_screencopy() const;
     bool has_idle_notify() const;
+
+    // Application-window protocols
+    bool has_decoration_manager() const;   // zxdg_decoration_manager_v1
+    bool has_viewporter() const;           // wp_viewporter
+    bool has_fractional_scale() const;     // wp_fractional_scale_manager_v1
+    bool has_presentation() const;         // wp_presentation
+    bool has_activation() const;           // xdg_activation_v1
+    bool has_cursor_shape() const;         // wp_cursor_shape_manager_v1
+    bool has_pointer_constraints() const;  // zwp_pointer_constraints_v1
+    bool has_relative_pointer() const;     // zwp_relative_pointer_manager_v1
+    bool has_data_device() const;          // wl_data_device_manager
+    bool has_primary_selection() const;    // zwp_primary_selection_device_manager_v1
+    bool has_text_input() const;           // zwp_text_input_manager_v3
+    bool has_toplevel_icon() const;        // xdg_toplevel_icon_manager_v1
+    bool has_xdg_output() const;           // zxdg_output_manager_v1
+
+    /// Bind every seat's pointer, keyboard and touch (and those of seats that
+    /// appear later) and start delivering input events. Idempotent.
+    void enable_input();
+    bool input_enabled() const { return input_enabled_; }
+
+    /// An application window (xdg_toplevel). Null without wl_compositor and
+    /// xdg_wm_base. The first configure arrives as a WindowConfigureEvent
+    /// after the initial commit, which this makes.
+    std::unique_ptr<Window> create_window(const WindowConfig& config);
+
+    /// The browl surface id of a wl_surface this Display created (windows,
+    /// layer surfaces, popups, lock surfaces); kNoSurface for any other.
+    SurfaceId surface_id_of(wl_surface* surface) const;
+
+    /// Ask xdg_activation_v1 for a token to activate a surface with (here or
+    /// in another process). `surface`, `seat` and `serial` say what user
+    /// action the request answers; each may be null / 0. The token arrives as
+    /// an ActivationTokenEvent with the returned id; 0 without the protocol.
+    RequestId request_activation_token(const std::string& app_id = "",
+                                       wl_surface* surface = nullptr,
+                                       Seat* seat = nullptr, uint32_t serial = 0);
+    /// Activate (raise and focus) `surface` with a token. False without the
+    /// protocol or with an empty token.
+    bool activate(const std::string& token, wl_surface* surface);
+
+    /// Ask wp_presentation when the surface's NEXT commit turns to light. Call
+    /// right before the commit (for a Vulkan swapchain: before
+    /// vkQueuePresentKHR). The answer is a PresentationFeedbackEvent with the
+    /// returned id; 0 without the protocol. Callable from any thread.
+    RequestId request_presentation_feedback(wl_surface* surface);
+    /// The clock presentation times are on (wp_presentation.clock_id), e.g.
+    /// CLOCK_MONOTONIC (1); -1 before the compositor said.
+    int presentation_clock_id() const;
 
     // Shell Role Factories
     std::unique_ptr<LayerSurface> create_layer_surface(const LayerSurfaceConfig& config);
@@ -159,6 +210,15 @@ private:
 
     SurfaceId next_surface_id_ = 1;
     uint64_t next_notification_id_ = 1;
+    bool input_enabled_ = false;
+
+public:
+    // The application-window globals and bookkeeping (src/app_globals.h).
+    struct AppGlobals;
+    AppGlobals& app_globals() const { return *app_; }
+
+private:
+    std::unique_ptr<AppGlobals> app_;
 };
 
 }  // namespace browl
