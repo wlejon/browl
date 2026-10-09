@@ -13,7 +13,7 @@ concurrency:
 # The browl library has no siblings. libwayland and sway come from the OS. Its
 # JavaScript binding (browl_api, on whenever browl is the top-level project on
 # Linux; it drives the Wayland client, so it is not built elsewhere) binds
-# bronze, which, with brass, comes from the commit CMakeLists.txt pins
+# bronze, which, with brass, comes from the head of its main branch
 # (cmake/bro_deps.cmake), fetched at configure: every job builds a plain clone.
 #
 # Where each part is built and tested:

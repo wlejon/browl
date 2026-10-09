@@ -87,19 +87,19 @@ ctest --test-dir build -C Release --output-on-failure
 CMake options:
 - `BROWL_BUILD_TESTS`: Build tests (default `ON` when top-level, `OFF` when included via `add_subdirectory`).
 - `BROWL_COVERAGE`: Instrument the build for gcov coverage (GCC/Clang).
-- `BROWL_ENABLE_API`: Build the standalone Bronze JavaScript API (default `ON` when top-level on Linux; bronze, with brass, from `../bronze` beside the top-level project or the pinned commit, fetched at configure by `cmake/bro_deps.cmake`).
+- `BROWL_ENABLE_API`: Build the standalone Bronze JavaScript API (default `ON` when top-level on Linux; bronze, with brass, from `../bronze` beside the top-level project or the head of its main branch, fetched at configure by `cmake/bro_deps.cmake`).
 
 ### Consuming browl
 
 Downstream projects consume the `browl::browl` CMake target. Ecosystem
-consumers pin it with `bro_dependency()` (`cmake/bro_deps.cmake`): a target the
+consumers declare it with `bro_dependency()` (`cmake/bro_deps.cmake`): a target the
 outer project already added wins, else a `../browl` working tree beside the
-top-level project, else the pinned commit, fetched at configure
+top-level project, else the head of its main branch, fetched at configure
 (`-DFETCHCONTENT_SOURCE_DIR_BROWL=<path>` points at another tree):
 
 ```cmake
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/bro_deps.cmake)
-bro_dependency(browl GITHUB wlejon/browl REF <40-hex sha>)
+bro_dependency(browl)
 
 target_link_libraries(your_target PRIVATE browl::browl)
 ```
