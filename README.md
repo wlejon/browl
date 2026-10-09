@@ -72,49 +72,20 @@ ctest --test-dir build -C Release --output-on-failure
 CMake options:
 - `BROWL_BUILD_TESTS`: Build tests (default `ON` when top-level, `OFF` when included via `add_subdirectory`).
 - `BROWL_COVERAGE`: Instrument the build for gcov coverage (GCC/Clang).
-- `BROWL_ENABLE_API`: Build the standalone Bronze JavaScript API (default `ON`; searches `../bronze` or `-DBRONZE_DIR=<path>`).
+- `BROWL_ENABLE_API`: Build the standalone Bronze JavaScript API (default `ON` when top-level on Linux; bronze, with brass, from `../bronze` beside the top-level project or the pinned commit, fetched at configure by `cmake/bro_deps.cmake`).
 
 ### Consuming browl
 
-Downstream projects consume the `browl::browl` CMake target. Following the
-ecosystem dependency convention, consumers can resolve `browl` either as a
-sibling directory or as a vendored submodule:
-
-#### Sibling layout
-
-When `browl` is checked out beside your project at `../browl`:
+Downstream projects consume the `browl::browl` CMake target. Ecosystem
+consumers pin it with `bro_dependency()` (`cmake/bro_deps.cmake`): a target the
+outer project already added wins, else a `../browl` working tree beside the
+top-level project, else the pinned commit, fetched at configure
+(`-DFETCHCONTENT_SOURCE_DIR_BROWL=<path>` points at another tree):
 
 ```cmake
-if(NOT TARGET browl::browl)
-    if(DEFINED BROWL_DIR AND EXISTS "${BROWL_DIR}/CMakeLists.txt")
-        # Explicit BROWL_DIR override supplied via -DBROWL_DIR=<path>
-    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../browl/CMakeLists.txt")
-        set(BROWL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../browl" CACHE PATH "browl source tree")
-    elseif(EXISTS "${CMAKE_SOURCE_DIR}/../browl/CMakeLists.txt")
-        set(BROWL_DIR "${CMAKE_SOURCE_DIR}/../browl" CACHE PATH "browl source tree")
-    endif()
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/bro_deps.cmake)
+bro_dependency(browl GITHUB wlejon/browl REF <40-hex sha>)
 
-    if(NOT BROWL_DIR OR NOT EXISTS "${BROWL_DIR}/CMakeLists.txt")
-        message(FATAL_ERROR "browl not found beside this repository or at BROWL_DIR")
-    endif()
-
-    add_subdirectory("${BROWL_DIR}" "${CMAKE_BINARY_DIR}/browl-build" EXCLUDE_FROM_ALL)
-endif()
-```
-
-#### Submodule layout
-
-When `browl` is vendored as a git submodule under `third_party/browl`:
-
-```cmake
-if(NOT TARGET browl::browl)
-    add_subdirectory(third_party/browl EXCLUDE_FROM_ALL)
-endif()
-```
-
-#### Linking
-
-```cmake
 target_link_libraries(your_target PRIVATE browl::browl)
 ```
 

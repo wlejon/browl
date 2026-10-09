@@ -50,8 +50,6 @@ jobs:
         with:
           path: browl
 
-      - uses: wlejon/bronze/.github/actions/checkout-toolchain@main
-
       - name: Configure and pre-build generated code + bronze (outside the traced build)
         shell: bash
         run: |
