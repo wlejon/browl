@@ -9,6 +9,7 @@
 #include "browl/display.h"
 
 #include "app_globals.h"
+#include "browl/shm_pool.h"
 #include "primary-selection-unstable-v1-client-protocol.h"
 #include "seat_impl.h"
 
@@ -21,6 +22,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstring>
 #include <thread>
 
 namespace browl {
@@ -166,7 +168,10 @@ static const struct wl_data_device_listener data_device_listener = {
     .selection = data_device_handle_selection,
 };
 
-static void data_source_handle_target(void*, struct wl_data_source*, const char*) {}
+static void data_source_handle_target(void* data, struct wl_data_source* /*source*/, const char* mime) {
+    auto* src = static_cast<SelectionSource*>(data);
+    src->impl->handle_drag_source(src, DragSourceEvent::Kind::Target, mime, 0);
+}
 
 static void data_source_handle_send(void* data, struct wl_data_source* /*source*/, const char* mime,
                                     int32_t fd) {
@@ -179,9 +184,20 @@ static void data_source_handle_cancelled(void* data, struct wl_data_source* /*so
     src->impl->handle_source_cancelled(src);
 }
 
-static void data_source_handle_dnd_drop_performed(void*, struct wl_data_source*) {}
-static void data_source_handle_dnd_finished(void*, struct wl_data_source*) {}
-static void data_source_handle_action(void*, struct wl_data_source*, uint32_t) {}
+static void data_source_handle_dnd_drop_performed(void* data, struct wl_data_source* /*source*/) {
+    auto* src = static_cast<SelectionSource*>(data);
+    src->impl->handle_drag_source(src, DragSourceEvent::Kind::Dropped, nullptr, 0);
+}
+
+static void data_source_handle_dnd_finished(void* data, struct wl_data_source* /*source*/) {
+    auto* src = static_cast<SelectionSource*>(data);
+    src->impl->handle_drag_source(src, DragSourceEvent::Kind::Finished, nullptr, 0);
+}
+
+static void data_source_handle_action(void* data, struct wl_data_source* /*source*/, uint32_t action) {
+    auto* src = static_cast<SelectionSource*>(data);
+    src->impl->handle_drag_source(src, DragSourceEvent::Kind::Action, nullptr, action);
+}
 
 static const struct wl_data_source_listener data_source_listener = {
     .target = data_source_handle_target,
@@ -254,6 +270,9 @@ void Seat::Impl::bind_data_devices() {
 
 void Seat::Impl::release_data_devices() {
     finish_drag_offer();
+    if (drag_source) {
+        end_drag_source(drag_source);
+    }
     for (Selection which : {Selection::Clipboard, Selection::Primary}) {
         SelectionSlot& s = slot(which);
         std::vector<void*> offers;
@@ -371,7 +390,48 @@ void Seat::Impl::handle_source_send(SelectionSource* source, const char* mime, i
     close(fd);
 }
 
+void Seat::Impl::handle_drag_source(SelectionSource* source, DragSourceEvent::Kind kind, const char* mime,
+                                    uint32_t action) {
+    if (!source->drag) {
+        return;
+    }
+    DragSourceEvent ev{seat_id(), kind, mime ? mime : "", action};
+    if (kind == DragSourceEvent::Kind::Action) {
+        std::lock_guard<std::mutex> lock(mutex);
+        drag_source_action = action;
+    } else if (kind == DragSourceEvent::Kind::Finished) {
+        std::lock_guard<std::mutex> lock(mutex);
+        ev.action = drag_source_action;
+    }
+    display->events().push(std::move(ev));
+    if (kind == DragSourceEvent::Kind::Finished) {
+        end_drag_source(source);
+    }
+}
+
+void Seat::Impl::end_drag_source(SelectionSource* source) {
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (drag_source == source) {
+            drag_source = nullptr;
+            drag_source_action = 0;
+        }
+    }
+    destroy_source(source);
+    if (drag_icon) {
+        wl_surface_destroy(drag_icon);
+        drag_icon = nullptr;
+    }
+    drag_icon_buffer.reset();
+    drag_icon_pool.reset();
+}
+
 void Seat::Impl::handle_source_cancelled(SelectionSource* source) {
+    if (source->drag) {
+        display->events().push(DragSourceEvent{seat_id(), DragSourceEvent::Kind::Cancelled, "", 0});
+        end_drag_source(source);
+        return;
+    }
     SelectionSlot& s = slot(source->which);
     const Selection which = source->which;
     bool lost = false;
@@ -421,6 +481,11 @@ void Seat::Impl::handle_drag_enter(uint32_t serial, wl_surface* surface, double 
                 accepted = want;
                 break;
             }
+        }
+        // Our own drag coming back over us: whatever it carries is ours to
+        // take, so a drop of a type outside drag_mime_types still lands.
+        if (accepted.empty() && drag_source && !mimes.empty()) {
+            accepted = mimes.front();
         }
         drag_offer = offer;
         drag_offer_mimes = mimes;
@@ -647,6 +712,15 @@ std::optional<std::vector<uint8_t>> Seat::read_drop(const std::string& mime_type
         if (!impl_->drag_offer || !impl_->drag_dropped || !has_mime(impl_->drag_offer_mimes, mime_type)) {
             return std::nullopt;
         }
+        // Our own drag dropped on us: answered from memory, as the source's
+        // send would only be dispatched by the thread now waiting here.
+        if (impl_->drag_source) {
+            for (const auto& [mime, bytes] : *impl_->drag_source->contents) {
+                if (mime == mime_type) {
+                    return bytes;
+                }
+            }
+        }
         if (pipe2(fds, O_CLOEXEC) != 0) {
             return std::nullopt;
         }
@@ -659,6 +733,106 @@ std::optional<std::vector<uint8_t>> Seat::read_drop(const std::string& mime_type
 
 void Seat::finish_drop() {
     impl_->finish_drag_offer();
+}
+
+bool Seat::start_drag(wl_surface* origin, SelectionContents contents, const DragIcon* icon, uint32_t actions) {
+    if (!impl_->data_device || !origin) {
+        return false;
+    }
+    uint32_t serial = 0;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        serial = impl_->last_press_serial;
+    }
+    if (serial == 0) {
+        return false;
+    }
+    if (impl_->drag_source) {
+        cancel_drag();
+    }
+    auto& app = display_->app_globals();
+    auto* src = new SelectionSource;
+    src->impl = impl_.get();
+    src->which = Selection::Clipboard;
+    src->drag = true;
+    src->contents = std::make_shared<const SelectionContents>(std::move(contents));
+    auto* p = wl_data_device_manager_create_data_source(app.data_device_manager);
+    wl_data_source_add_listener(p, &data_source_listener, src);
+    for (const auto& [mime, bytes] : *src->contents) {
+        wl_data_source_offer(p, mime.c_str());
+    }
+    if (wl_data_source_get_version(p) >= WL_DATA_SOURCE_SET_ACTIONS_SINCE_VERSION) {
+        const uint32_t allowed = actions & (dnd_action::Copy | dnd_action::Move | dnd_action::Ask);
+        wl_data_source_set_actions(p, allowed ? allowed : dnd_action::Copy);
+    }
+    src->proxy = p;
+    impl_->sources.push_back(src);
+
+    // The icon: an shm buffer on a surface of its own, given its role by
+    // start_drag and its picture by the commit after it.
+    wl_surface* icon_surface = nullptr;
+    std::shared_ptr<ShmPool> pool;
+    std::shared_ptr<ShmBuffer> buffer;
+    if (icon && icon->width > 0 && icon->height > 0 &&
+        icon->pixels.size() >= static_cast<size_t>(icon->width) * static_cast<size_t>(icon->height) * 4 &&
+        display_->wl_compositor_ptr() && display_->has_shm()) {
+        const int32_t stride = icon->width * 4;
+        const size_t bytes = static_cast<size_t>(stride) * static_cast<size_t>(icon->height);
+        pool = display_->create_shm_pool(bytes);
+        if (pool) {
+            buffer = pool->allocate_buffer(icon->width, icon->height, stride, WL_SHM_FORMAT_ARGB8888);
+        }
+        if (buffer) {
+            std::memcpy(buffer->data(), icon->pixels.data(), bytes);
+            icon_surface = wl_compositor_create_surface(display_->wl_compositor_ptr());
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        impl_->drag_source = src;
+        impl_->drag_source_action = 0;
+    }
+    impl_->drag_icon = icon_surface;
+    impl_->drag_icon_pool = std::move(pool);
+    impl_->drag_icon_buffer = std::move(buffer);
+    wl_data_device_start_drag(impl_->data_device, p, origin, icon_surface, serial);
+    if (icon_surface) {
+        // The hotspot goes under the pointer: the icon's top-left corner
+        // starts at the pointer, and the offset moves it.
+        if (wl_surface_get_version(icon_surface) >= WL_SURFACE_OFFSET_SINCE_VERSION) {
+            wl_surface_offset(icon_surface, -icon->hotspot_x, -icon->hotspot_y);
+            wl_surface_attach(icon_surface, impl_->drag_icon_buffer->wl_buffer_ptr(), 0, 0);
+        } else {
+            wl_surface_attach(icon_surface, impl_->drag_icon_buffer->wl_buffer_ptr(), -icon->hotspot_x,
+                              -icon->hotspot_y);
+        }
+        wl_surface_damage(icon_surface, 0, 0, icon->width, icon->height);
+        wl_surface_commit(icon_surface);
+    }
+    display_->flush();
+    return true;
+}
+
+bool Seat::dragging() const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->drag_source != nullptr;
+}
+
+void Seat::cancel_drag() {
+    SelectionSource* src = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        src = impl_->drag_source;
+    }
+    if (!src) {
+        return;
+    }
+    // Destroying the source ends the drag in the compositor; nothing more
+    // comes for it, so the cancellation is reported here.
+    display_->events().push(DragSourceEvent{id_, DragSourceEvent::Kind::Cancelled, "", 0});
+    impl_->end_drag_source(src);
+    display_->flush();
 }
 
 }  // namespace browl

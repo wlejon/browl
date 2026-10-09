@@ -112,7 +112,9 @@ void source_offer_req(struct wl_client*, struct wl_resource* resource, const cha
     static_cast<CompositorSource*>(wl_resource_get_user_data(resource))->mimes.emplace_back(mime);
 }
 
-void data_source_set_actions_req(struct wl_client*, struct wl_resource*, uint32_t) {}
+void data_source_set_actions_req(struct wl_client*, struct wl_resource* resource, uint32_t actions) {
+    static_cast<CompositorSource*>(wl_resource_get_user_data(resource))->actions = actions;
+}
 
 const struct wl_data_source_interface data_source_impl = {
     .offer = source_offer_req,
@@ -128,7 +130,6 @@ const struct zwp_primary_selection_source_v1_interface primary_source_impl = {
 void source_destroyed(struct wl_resource* resource) {
     static_cast<CompositorSource*>(wl_resource_get_user_data(resource))->resource = nullptr;
 }
-
 // An offer's user data is the CompositorSource it offers.
 void offer_receive(struct wl_resource* resource, const char* mime, int32_t fd) {
     auto* src = static_cast<CompositorSource*>(wl_resource_get_user_data(resource));
@@ -210,8 +211,21 @@ void set_selection(HeadlessCompositor* comp, struct wl_resource* source, bool pr
     }
 }
 
-void data_device_start_drag_req(struct wl_client*, struct wl_resource*, struct wl_resource*,
-                                struct wl_resource*, struct wl_resource*, uint32_t) {}
+void data_device_start_drag_req(struct wl_client*, struct wl_resource* resource, struct wl_resource* source,
+                                struct wl_resource* origin, struct wl_resource* icon, uint32_t serial) {
+    auto* comp = comp_of(resource);
+    auto* src = source ? static_cast<CompositorSource*>(wl_resource_get_user_data(source)) : nullptr;
+    ++comp->app_.drag_starts;
+    comp->app_.drag_serial = serial;
+    comp->app_.drag_origin_is_window = origin && origin == comp->window_surface_;
+    comp->app_.drag_mimes = src ? src->mimes : std::vector<std::string>{};
+    comp->app_.drag_source_actions = src ? src->actions : 0;
+    comp->app_.drag_has_icon = icon != nullptr;
+    comp->app_.drag_icon_width = 0;
+    comp->app_.drag_icon_commits = 0;
+    comp->drag_source_ = src;
+    comp->drag_icon_surface_ = icon;
+}
 
 void data_device_set_selection_req(struct wl_client*, struct wl_resource* resource, struct wl_resource* source,
                                    uint32_t /*serial*/) {
@@ -472,6 +486,57 @@ void HeadlessCompositor::send_drag(const std::vector<std::string>& mimes, double
     wl_data_device_send_motion(device, 0, wl_fixed_from_double(to_x), wl_fixed_from_double(to_y));
     wl_data_device_send_drop(device);
     wl_display_flush_clients(display_);
+}
+
+void HeadlessCompositor::drag_source_target(const char* mime) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!drag_source_ || !drag_source_->resource) return;
+    wl_data_source_send_target(drag_source_->resource, mime);
+    wl_display_flush_clients(display_);
+}
+
+void HeadlessCompositor::drag_source_action(uint32_t action) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!drag_source_ || !drag_source_->resource) return;
+    wl_data_source_send_action(drag_source_->resource, action);
+    wl_display_flush_clients(display_);
+}
+
+void HeadlessCompositor::drag_source_dropped() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!drag_source_ || !drag_source_->resource) return;
+    wl_data_source_send_dnd_drop_performed(drag_source_->resource);
+    wl_display_flush_clients(display_);
+}
+
+void HeadlessCompositor::drag_source_finished() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!drag_source_ || !drag_source_->resource) return;
+    wl_data_source_send_dnd_finished(drag_source_->resource);
+    wl_display_flush_clients(display_);
+}
+
+void HeadlessCompositor::drag_source_cancelled() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!drag_source_ || !drag_source_->resource) return;
+    wl_data_source_send_cancelled(drag_source_->resource);
+    wl_display_flush_clients(display_);
+}
+
+int HeadlessCompositor::drag_source_receive(const std::string& mime) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!drag_source_ || !drag_source_->resource) return -1;
+    int fds[2];
+    if (pipe(fds) != 0) return -1;
+    wl_data_source_send_send(drag_source_->resource, mime.c_str(), fds[1]);
+    close(fds[1]);
+    wl_display_flush_clients(display_);
+    return fds[0];
+}
+
+bool HeadlessCompositor::drag_source_alive() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return drag_source_ && drag_source_->resource;
 }
 
 void HeadlessCompositor::remove_cursor_shape() {

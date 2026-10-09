@@ -642,6 +642,23 @@ struct DragDropEvent {
     bool operator==(const DragDropEvent&) const = default;
 };
 
+/// The drag this client started (Seat::start_drag), as the compositor
+/// reports it on the source:
+///   Target     a client under the pointer would take `mime_type` (empty: none would)
+///   Action     a drop now would take `action` (a dnd_action bit)
+///   Dropped    the user let go over a client that accepts it; it may still be reading
+///   Finished   the target is done with it: the drag is over, `action` taken
+///   Cancelled  the drag is over without a drop (nothing accepted it, or it was refused)
+struct DragSourceEvent {
+    enum class Kind : uint8_t { Target, Action, Dropped, Finished, Cancelled };
+    SeatId seat = kNoSeat;
+    Kind kind = Kind::Target;
+    std::string mime_type;
+    uint32_t action = 0;
+
+    bool operator==(const DragSourceEvent&) const = default;
+};
+
 /// Text input focus (zwp_text_input_v3.enter / leave): the seat's input
 /// method may now serve this surface. Enable text input after enter.
 struct TextInputFocusEvent {
@@ -729,6 +746,7 @@ using ShellEvent = std::variant<
     DragMotionEvent,
     DragLeaveEvent,
     DragDropEvent,
+    DragSourceEvent,
     TextInputFocusEvent,
     TextInputEvent>;
 

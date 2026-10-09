@@ -75,6 +75,18 @@ struct CompositorAppState {
     int32_t cursor_hotspot_x = 0, cursor_hotspot_y = 0;
     int32_t cursor_buffer_width = 0;  // the shm buffer attached to that surface
     int cursor_commits = 0;
+    // wl_data_device.start_drag (the newest drag)
+    int drag_starts = 0;
+    uint32_t drag_serial = 0;
+    bool drag_origin_is_window = false;
+    std::vector<std::string> drag_mimes;
+    uint32_t drag_source_actions = 0;
+    bool drag_has_icon = false;
+    int32_t drag_icon_width = 0;
+    uint32_t drag_icon_first_pixel = 0;
+    int32_t drag_icon_offset_x = 0, drag_icon_offset_y = 0;
+    int drag_icon_commits = 0;
+    int drag_icons_destroyed = 0;
     // zwp_text_input_v3
     bool text_input_enabled = false;
     uint32_t text_input_purpose = 0;
@@ -87,6 +99,7 @@ struct CompositorSource {
     struct wl_resource* resource = nullptr;  // null once the client destroyed it
     std::vector<std::string> mimes;
     bool primary = false;
+    uint32_t actions = 0;  // wl_data_source.set_actions
 };
 
 class HeadlessCompositor {
@@ -192,6 +205,17 @@ public:
     // A drag offering `mimes` enters the newest window at (x, y), moves to
     // (to_x, to_y) and is dropped there.
     void send_drag(const std::vector<std::string>& mimes, double x, double y, double to_x, double to_y);
+    // The drag a client started (wl_data_device.start_drag), from the
+    // compositor's side: what a target would take, the action chosen, the
+    // drop, the target finishing, a cancel; and reading what it carries
+    // (returns the pipe's read end; the client writes it as it dispatches).
+    void drag_source_target(const char* mime);
+    void drag_source_action(uint32_t action);
+    void drag_source_dropped();
+    void drag_source_finished();
+    void drag_source_cancelled();
+    int drag_source_receive(const std::string& mime);
+    bool drag_source_alive() const;  // the client has not destroyed the drag's source
     // axis_source, value120 + axis on each nonzero axis, then frame.
     void send_pointer_scroll(int32_t value120_x, int32_t value120_y, double dx, double dy,
                              uint32_t source);
@@ -230,6 +254,8 @@ public:
     std::vector<struct wl_resource*> data_devices_;
     std::vector<struct wl_resource*> primary_devices_;
     std::vector<std::unique_ptr<CompositorSource>> sources_;
+    CompositorSource* drag_source_ = nullptr;
+    struct wl_resource* drag_icon_surface_ = nullptr;
     CompositorSource* clipboard_selection_ = nullptr;
     CompositorSource* primary_selection_ = nullptr;
     int next_token_ = 1;

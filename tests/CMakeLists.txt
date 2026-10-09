@@ -77,6 +77,12 @@ foreach(_test test_display test_layer_surface test_popup test_foreign_toplevel t
     browl_test(${_test} SOURCES ${_test}.cpp LIBS headless_compositor)
 endforeach()
 
+# A manual test client, not a ctest: drags files out of a window, the way a
+# file manager does, for checking a drop target (see the file).
+add_executable(browl_drag_source tool_drag_source.cpp)
+target_link_libraries(browl_drag_source PRIVATE browl::browl)
+browl_warnings(browl_drag_source)
+
 # Keymap needs no compositor, only xkbcommon and its data.
 browl_test(test_keymap SOURCES test_keymap.cpp LIBS PkgConfig::XKBCOMMON Threads::Threads)
 

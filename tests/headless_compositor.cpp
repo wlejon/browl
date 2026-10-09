@@ -29,6 +29,14 @@ static void surface_attach_req(struct wl_client* /*client*/, struct wl_resource*
     if (comp && buffer && resource == comp->cursor_surface_) {
         if (wl_shm_buffer* shm = wl_shm_buffer_get(buffer)) comp->app_.cursor_buffer_width = wl_shm_buffer_get_width(shm);
     }
+    if (comp && buffer && resource == comp->drag_icon_surface_) {
+        if (wl_shm_buffer* shm = wl_shm_buffer_get(buffer)) {
+            comp->app_.drag_icon_width = wl_shm_buffer_get_width(shm);
+            wl_shm_buffer_begin_access(shm);
+            comp->app_.drag_icon_first_pixel = *static_cast<const uint32_t*>(wl_shm_buffer_get_data(shm));
+            wl_shm_buffer_end_access(shm);
+        }
+    }
 }
 
 static void surface_damage_req(struct wl_client* /*client*/, struct wl_resource* /*resource*/,
@@ -53,6 +61,9 @@ static void surface_commit_req(struct wl_client* /*client*/, struct wl_resource*
         if (resource == comp->cursor_surface_) {
             ++comp->app_.cursor_commits;
         }
+        if (resource == comp->drag_icon_surface_) {
+            ++comp->app_.drag_icon_commits;
+        }
     }
 }
 
@@ -70,8 +81,14 @@ static void surface_set_buffer_scale_req(struct wl_client* /*client*/, struct wl
 static void surface_damage_buffer_req(struct wl_client* /*client*/, struct wl_resource* /*resource*/,
                                       int32_t /*x*/, int32_t /*y*/, int32_t /*width*/, int32_t /*height*/) {}
 
-static void surface_offset_req(struct wl_client* /*client*/, struct wl_resource* /*resource*/,
-                               int32_t /*x*/, int32_t /*y*/) {}
+static void surface_offset_req(struct wl_client* /*client*/, struct wl_resource* resource,
+                               int32_t x, int32_t y) {
+    auto* comp = static_cast<HeadlessCompositor*>(wl_resource_get_user_data(resource));
+    if (comp && resource == comp->drag_icon_surface_) {
+        comp->app_.drag_icon_offset_x = x;
+        comp->app_.drag_icon_offset_y = y;
+    }
+}
 
 static void surface_destroyed(struct wl_resource* resource) {
     auto* comp = static_cast<HeadlessCompositor*>(wl_resource_get_user_data(resource));
@@ -83,6 +100,10 @@ static void surface_destroyed(struct wl_resource* resource) {
     }
     if (comp && comp->cursor_surface_ == resource) {
         comp->cursor_surface_ = nullptr;
+    }
+    if (comp && comp->drag_icon_surface_ == resource) {
+        comp->drag_icon_surface_ = nullptr;
+        ++comp->app_.drag_icons_destroyed;
     }
 }
 

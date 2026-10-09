@@ -249,6 +249,14 @@ enum class Selection : uint32_t {
     Primary = 1,
 };
 
+/// Drag-and-drop actions (wl_data_device_manager.dnd_action), as bits.
+namespace dnd_action {
+inline constexpr uint32_t None = 0;
+inline constexpr uint32_t Copy = 1u << 0;
+inline constexpr uint32_t Move = 1u << 1;
+inline constexpr uint32_t Ask = 1u << 2;
+}  // namespace dnd_action
+
 /// Modifier state, decoded from the keymap (Keymap / ModifiersEvent).
 namespace modifier {
 inline constexpr uint32_t Shift = 1u << 0;

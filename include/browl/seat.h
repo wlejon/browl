@@ -10,7 +10,8 @@
 //   pointer lock      lock_pointer + relative motion (pointer constraints and
 //                     relative pointer); warp_pointer
 //   selections        the clipboard and the primary selection: set, read, own
-//   drag and drop     drops onto the client's surfaces (DragDropEvent)
+//   drag and drop     drops onto the client's surfaces (DragDropEvent), and
+//                     drags out of them (start_drag, DragSourceEvent)
 //   text input        zwp_text_input_v3, an input method's composition
 //
 // Requests that need a serial (setting a selection, a cursor, a move) use the
@@ -127,6 +128,29 @@ public:
         const std::string& mime_type,
         std::chrono::milliseconds timeout = std::chrono::milliseconds(2000));
     void finish_drop();
+
+    /// A drag's look: premultiplied ARGB8888 pixels (B, G, R, A bytes in
+    /// memory), `width` * 4 bytes a row, held at the pointer by the
+    /// hotspot (the pixel under the pointer).
+    struct DragIcon {
+        int32_t width = 0, height = 0;
+        std::vector<uint8_t> pixels;
+        int32_t hotspot_x = 0, hotspot_y = 0;
+    };
+    /// Start a drag out of `origin` (one of this client's surfaces) carrying
+    /// `contents`, while the pointer button pressed on it is still held
+    /// (the press's serial proves it). `actions` are the dnd_action bits it
+    /// allows. The compositor draws `icon` at the pointer, when given. Its
+    /// progress comes back as DragSourceEvents; a drop onto this client's
+    /// own surfaces arrives as the usual DragEnter/Motion/Drop events, and
+    /// read_drop answers it from `contents`. False when the compositor
+    /// lacks a data device or no button press was seen.
+    bool start_drag(wl_surface* origin, SelectionContents contents, const DragIcon* icon = nullptr,
+                    uint32_t actions = dnd_action::Copy);
+    /// A drag this client started is still under way.
+    bool dragging() const;
+    /// Withdraw the drag this client started (the compositor ends it).
+    void cancel_drag();
 
     /// zwp_text_input_v3 for this seat. False when the compositor lacks it.
     bool has_text_input() const;

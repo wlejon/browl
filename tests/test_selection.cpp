@@ -4,9 +4,12 @@
 // through a pipe the owner writes (off its dispatch thread, so a payload far
 // larger than a pipe's buffer gets through), answered from memory for the
 // owner itself, taken over (the old owner's source cancelled) and cleared;
-// and a drag dropped on a window, at the position of its last motion.
+// and a drag dropped on a window, at the position of its last motion; and a
+// drag out of a window (start_drag), from the compositor's side.
 #include "browl/browl.h"
 #include "fake_session.h"
+
+#include <unistd.h>
 
 #include <atomic>
 #include <thread>
@@ -47,6 +50,8 @@ private:
     std::atomic<bool> stop_{false};
     std::thread thread_;
 };
+
+void drag_out(bstest::FakeSession& s, Display& b, Seat& seat, Window& win);
 
 void run() {
     bstest::FakeSession s;
@@ -190,6 +195,118 @@ void run() {
     CHECK_EQ(drop->y, 60.25);
     CHECK_EQ(drop->mime_types.size(), size_t(2));
     seat_b->finish_drop();
+
+    drag_out(s, b, *seat_b, *win_b);
+}
+
+// A drag out of a window: refused without a press; started with the press's
+// serial, the source's types and actions, and an icon committed after it
+// with its hotspot under the pointer; the compositor reads it through the
+// source; target / action / drop / finish come back as DragSourceEvents, and
+// the finish (or a cancel) ends it, source and icon gone.
+void drag_out(bstest::FakeSession& s, Display& b, Seat& seat, Window& win) {
+    constexpr uint32_t kBtnLeft = 0x110;
+    CHECK(!seat.dragging());
+    CHECK(!seat.start_drag(win.wl_surface_ptr(), text_selection("dragged")));  // no press yet
+
+    s.server.send_pointer_enter(10, 10);
+    s.server.send_pointer_button(kBtnLeft, true);
+    settle(b);
+    const uint32_t press = s.server.last_serial();
+
+    Seat::DragIcon icon;
+    icon.width = 8;
+    icon.height = 4;
+    icon.pixels.assign(8 * 4 * 4, 0);
+    icon.pixels[0] = 0x11;  // B
+    icon.pixels[1] = 0x22;  // G
+    icon.pixels[2] = 0x33;  // R
+    icon.pixels[3] = 0xff;  // A
+    icon.hotspot_x = 3;
+    icon.hotspot_y = 2;
+    SelectionContents contents = text_selection("dragged");
+    contents.emplace_back("text/uri-list", std::vector<uint8_t>{'f', 'i', 'l', 'e', ':', '/', '/', '/', 'x'});
+    CHECK(seat.start_drag(win.wl_surface_ptr(), contents, &icon, dnd_action::Copy | dnd_action::Move));
+    CHECK(seat.dragging());
+    settle(b);
+    auto st = s.server.app_state();
+    CHECK_EQ(st.drag_starts, 1);
+    CHECK_EQ(st.drag_serial, press);
+    CHECK(st.drag_origin_is_window);
+    CHECK_EQ(st.drag_mimes.size(), size_t(6));
+    CHECK_EQ(st.drag_mimes.back(), std::string("text/uri-list"));
+    CHECK_EQ(st.drag_source_actions, dnd_action::Copy | dnd_action::Move);
+    CHECK(st.drag_has_icon);
+    CHECK_EQ(st.drag_icon_width, 8);
+    CHECK_EQ(st.drag_icon_first_pixel, 0xff332211u);
+    CHECK_EQ(st.drag_icon_offset_x, -3);
+    CHECK_EQ(st.drag_icon_offset_y, -2);
+    CHECK_EQ(st.drag_icon_commits, 1);
+
+    // The target reads it while the drag is under way.
+    {
+        const int fd = s.server.drag_source_receive("text/uri-list");
+        REQUIRE(fd >= 0);
+        settle(b);
+        std::string got;
+        char buf[64];
+        for (ssize_t n; (n = read(fd, buf, sizeof(buf))) > 0;) got.append(buf, static_cast<size_t>(n));
+        close(fd);
+        CHECK_EQ(got, std::string("file:///x"));
+    }
+
+    s.server.drag_source_target("text/uri-list");
+    s.server.drag_source_action(dnd_action::Copy);
+    s.server.drag_source_dropped();
+    auto events = settle(b);
+    const auto* target = find_event<DragSourceEvent>(events, [](const DragSourceEvent& e) {
+        return e.kind == DragSourceEvent::Kind::Target;
+    });
+    REQUIRE(target != nullptr);
+    CHECK_EQ(target->mime_type, std::string("text/uri-list"));
+    const auto* action = find_event<DragSourceEvent>(events, [](const DragSourceEvent& e) {
+        return e.kind == DragSourceEvent::Kind::Action;
+    });
+    REQUIRE(action != nullptr);
+    CHECK_EQ(action->action, dnd_action::Copy);
+    CHECK(find_event<DragSourceEvent>(events, [](const DragSourceEvent& e) {
+              return e.kind == DragSourceEvent::Kind::Dropped;
+          }) != nullptr);
+    CHECK(seat.dragging());  // still: the target has not finished
+
+    s.server.drag_source_finished();
+    events = settle(b);
+    const auto* finished = find_event<DragSourceEvent>(events, [](const DragSourceEvent& e) {
+        return e.kind == DragSourceEvent::Kind::Finished;
+    });
+    REQUIRE(finished != nullptr);
+    CHECK_EQ(finished->action, dnd_action::Copy);
+    CHECK(!seat.dragging());
+    CHECK(!s.server.drag_source_alive());
+    CHECK_EQ(s.server.app_state().drag_icons_destroyed, 1);
+
+    // A second drag, without an icon, cancelled by the compositor.
+    CHECK(seat.start_drag(win.wl_surface_ptr(), text_selection("again")));
+    settle(b);
+    CHECK_EQ(s.server.app_state().drag_starts, 2);
+    CHECK(!s.server.app_state().drag_has_icon);
+    s.server.drag_source_cancelled();
+    events = settle(b);
+    CHECK(find_event<DragSourceEvent>(events, [](const DragSourceEvent& e) {
+              return e.kind == DragSourceEvent::Kind::Cancelled;
+          }) != nullptr);
+    CHECK(!seat.dragging());
+    CHECK(!s.server.drag_source_alive());
+
+    // A third, withdrawn by the client.
+    CHECK(seat.start_drag(win.wl_surface_ptr(), text_selection("withdrawn")));
+    seat.cancel_drag();
+    events = settle(b);
+    CHECK(find_event<DragSourceEvent>(events, [](const DragSourceEvent& e) {
+              return e.kind == DragSourceEvent::Kind::Cancelled;
+          }) != nullptr);
+    CHECK(!seat.dragging());
+    CHECK(!s.server.drag_source_alive());
 }
 
 }  // namespace

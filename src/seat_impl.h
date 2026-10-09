@@ -43,12 +43,17 @@ namespace browl {
 
 class Display;
 
-/// One selection source this client offered (clipboard or primary).
+class ShmPool;
+class ShmBuffer;
+
+/// One selection source this client offered (clipboard or primary), or the
+/// source of a drag it started (drag: a wl_data_source in no selection slot).
 struct SelectionSource {
     Seat::Impl* impl = nullptr;
     Selection which = Selection::Clipboard;
     void* proxy = nullptr;  // wl_data_source* or zwp_primary_selection_source_v1*
     std::shared_ptr<const SelectionContents> contents;
+    bool drag = false;
 };
 
 /// The state of one selection (clipboard or primary) on this seat.
@@ -86,6 +91,7 @@ struct Seat::Impl {
     wl_surface* pointer_surface = nullptr;
     SurfaceId pointer_focus = kNoSurface;
     uint32_t pointer_enter_serial = 0;
+    uint32_t last_press_serial = 0;  // the newest button press: a drag's implicit grab
     double pointer_x = 0, pointer_y = 0;
     struct AxisFrame {
         bool any = false;
@@ -154,6 +160,12 @@ struct Seat::Impl {
     double drag_x = 0, drag_y = 0;  // the drag's last position, surface-local (wl_data_device.drop has none)
     bool drag_dropped = false;
     std::vector<std::string> drag_mime_types{"text/uri-list", "text/plain;charset=utf-8", "text/plain"};
+    // The drag this client started (start_drag), until it finishes or is cancelled.
+    SelectionSource* drag_source = nullptr;
+    uint32_t drag_source_action = 0;  // the action the compositor last chose for it
+    wl_surface* drag_icon = nullptr;
+    std::shared_ptr<ShmPool> drag_icon_pool;
+    std::shared_ptr<ShmBuffer> drag_icon_buffer;
 
     SelectionSlot& slot(Selection which) { return which == Selection::Primary ? primary : clipboard; }
     const SelectionSlot& slot(Selection which) const {
@@ -175,6 +187,11 @@ struct Seat::Impl {
     void handle_drag_leave();
     void handle_drag_motion(uint32_t time, double x, double y);
     void handle_drop();
+    // The drag source's side (drag sources only).
+    void handle_drag_source(SelectionSource* source, DragSourceEvent::Kind kind, const char* mime,
+                            uint32_t action);
+    /// The drag this client started is over: its source and icon go.
+    void end_drag_source(SelectionSource* source);
 
     // --- Text input (seat_text_input.cpp) ---
     zwp_text_input_v3* text_input = nullptr;

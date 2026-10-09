@@ -72,6 +72,10 @@ static void pointer_handle_button(void* data, struct wl_pointer* /*pointer*/, ui
                                   uint32_t time, uint32_t button, uint32_t state) {
     auto* impl = impl_of(data);
     impl->note_serial(serial);
+    if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
+        std::lock_guard<std::mutex> lock(impl->mutex);
+        impl->last_press_serial = serial;
+    }
     impl->display->events().push(PointerButtonEvent{impl->seat_id(), impl->pointer_focus, serial, time,
                                                     button, state == WL_POINTER_BUTTON_STATE_PRESSED});
 }

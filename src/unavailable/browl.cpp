@@ -173,6 +173,9 @@ std::optional<std::vector<uint8_t>> Seat::read_drop(const std::string&, std::chr
     return std::nullopt;
 }
 void Seat::finish_drop() {}
+bool Seat::start_drag(wl_surface*, SelectionContents, const DragIcon*, uint32_t) { return false; }
+bool Seat::dragging() const { return false; }
+void Seat::cancel_drag() {}
 bool Seat::has_text_input() const { return false; }
 void Seat::enable_text_input(uint32_t, ContentPurpose) {}
 void Seat::disable_text_input() {}
