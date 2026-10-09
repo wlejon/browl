@@ -197,7 +197,12 @@ private:
     wl_shm* shm_ = nullptr;
     zwlr_layer_shell_v1* layer_shell_ = nullptr;
     xdg_wm_base* xdg_wm_base_ = nullptr;
+    // Bound on the first foreign_toplevel_manager() call, not at connect: once
+    // bound, the compositor sends a handle for every toplevel on the desktop,
+    // which a plain application has no use for.
     zwlr_foreign_toplevel_manager_v1* foreign_toplevel_manager_raw_ = nullptr;
+    uint32_t foreign_toplevel_global_ = 0;
+    uint32_t foreign_toplevel_version_ = 0;
     ext_session_lock_manager_v1* session_lock_manager_ = nullptr;
     zwp_idle_inhibit_manager_v1* idle_inhibit_manager_ = nullptr;
     zwlr_screencopy_manager_v1* screencopy_manager_raw_ = nullptr;

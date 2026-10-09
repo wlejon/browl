@@ -243,7 +243,7 @@ bool Display::has_xdg_shell() const {
 }
 
 bool Display::has_foreign_toplevel_manager() const {
-    return foreign_toplevel_manager_raw_ != nullptr;
+    return foreign_toplevel_manager_raw_ != nullptr || foreign_toplevel_global_ != 0;
 }
 
 bool Display::has_session_lock() const {
@@ -286,6 +286,15 @@ std::unique_ptr<LayerSurface> Display::create_layer_surface(const LayerSurfaceCo
 }
 
 std::shared_ptr<ForeignToplevelManager> Display::foreign_toplevel_manager() {
+    if (!foreign_toplevel_manager_raw_ && foreign_toplevel_global_) {
+        foreign_toplevel_manager_raw_ = static_cast<zwlr_foreign_toplevel_manager_v1*>(
+            wl_registry_bind(registry_, foreign_toplevel_global_,
+                             &zwlr_foreign_toplevel_manager_v1_interface,
+                             std::min(foreign_toplevel_version_, 3u)));
+        // As if bound at connect: the compositor has seen the bind (and so
+        // announces toplevels made from here on) by the time this returns.
+        roundtrip();
+    }
     if (!toplevel_manager_instance_ && foreign_toplevel_manager_raw_) {
         toplevel_manager_instance_ =
             std::make_shared<ForeignToplevelManager>(foreign_toplevel_manager_raw_, this);
@@ -460,9 +469,8 @@ void Display::handle_global(uint32_t name, const char* interface, uint32_t versi
             xdg_wm_base_add_listener(xdg_wm_base_, &xdg_base_listener, this);
         }
     } else if (std::strcmp(interface, zwlr_foreign_toplevel_manager_v1_interface.name) == 0) {
-        uint32_t bind_ver = std::min(version, 3u);
-        foreign_toplevel_manager_raw_ = static_cast<zwlr_foreign_toplevel_manager_v1*>(
-            wl_registry_bind(registry_, name, &zwlr_foreign_toplevel_manager_v1_interface, bind_ver));
+        foreign_toplevel_global_ = name;
+        foreign_toplevel_version_ = version;
     } else if (std::strcmp(interface, ext_session_lock_manager_v1_interface.name) == 0) {
         uint32_t bind_ver = std::min(version, 1u);
         session_lock_manager_ = static_cast<ext_session_lock_manager_v1*>(
