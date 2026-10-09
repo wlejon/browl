@@ -37,6 +37,7 @@ namespace browl {
 class Window;
 struct ActivationRequest;
 struct FeedbackRequest;
+struct FrameCallbackRequest;
 
 struct Display::AppGlobals {
     Display* display = nullptr;
@@ -88,6 +89,7 @@ struct Display::AppGlobals {
     // Display::request_presentation_feedback).
     void forget_activation(ActivationRequest* req);
     void forget_feedback(FeedbackRequest* req);
+    void forget_frame_callback(FrameCallbackRequest* req);
 
     mutable std::mutex surfaces_mutex;
     std::unordered_map<wl_surface*, SurfaceId> surfaces;
@@ -96,6 +98,7 @@ struct Display::AppGlobals {
     std::mutex requests_mutex;
     std::unordered_set<ActivationRequest*> activations;
     std::unordered_set<FeedbackRequest*> feedbacks;
+    std::unordered_set<FrameCallbackRequest*> frame_callbacks;
 };
 
 }  // namespace browl

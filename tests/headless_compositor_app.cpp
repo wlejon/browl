@@ -320,8 +320,8 @@ void HeadlessCompositor::init_app_globals() {
                      bind_with<&xdg_activation_v1_interface, &activation_impl>);
     wl_global_create(display_, &xdg_toplevel_icon_manager_v1_interface, 1, this,
                      bind_with<&xdg_toplevel_icon_manager_v1_interface, &icon_manager_impl>);
-    wl_global_create(display_, &wp_cursor_shape_manager_v1_interface, 1, this,
-                     bind_with<&wp_cursor_shape_manager_v1_interface, &cursor_manager_impl>);
+    cursor_shape_global_ = wl_global_create(display_, &wp_cursor_shape_manager_v1_interface, 1, this,
+                                            bind_with<&wp_cursor_shape_manager_v1_interface, &cursor_manager_impl>);
     wl_global_create(display_, &zxdg_output_manager_v1_interface, 3, this,
                      bind_with<&zxdg_output_manager_v1_interface, &xdg_output_manager_impl>);
 }

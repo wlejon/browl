@@ -151,6 +151,7 @@ struct Seat::Impl {
     std::string drag_accepted_mime;
     uint32_t drag_serial = 0;
     SurfaceId drag_surface = kNoSurface;
+    double drag_x = 0, drag_y = 0;  // the drag's last position, surface-local (wl_data_device.drop has none)
     bool drag_dropped = false;
     std::vector<std::string> drag_mime_types{"text/uri-list", "text/plain;charset=utf-8", "text/plain"};
 

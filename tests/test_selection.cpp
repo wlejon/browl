@@ -3,7 +3,8 @@
 // and the primary selection set by one client, announced to the other, read
 // through a pipe the owner writes (off its dispatch thread, so a payload far
 // larger than a pipe's buffer gets through), answered from memory for the
-// owner itself, taken over (the old owner's source cancelled) and cleared.
+// owner itself, taken over (the old owner's source cancelled) and cleared;
+// and a drag dropped on a window, at the position of its last motion.
 #include "browl/browl.h"
 #include "fake_session.h"
 
@@ -168,6 +169,26 @@ void run() {
     // Drag mime preference is settable; there is no drag here to accept.
     seat_b->set_drag_mime_types({"text/uri-list"});
     CHECK(!seat_b->read_drop("text/uri-list"));
+    seat_b->finish_drop();
+
+    // A drag into B's window: enter, a motion, the drop. wl_data_device.drop
+    // carries no position, so the drop is where the last motion left it.
+    s.server.send_drag({"text/uri-list", kText}, 5, 6, 40.5, 60.25);
+    events = settle(b);
+    const auto* enter = find_event<DragEnterEvent>(events);
+    REQUIRE(enter != nullptr);
+    CHECK_EQ(enter->surface_id, win_b->id());
+    CHECK_EQ(enter->x, 5.0);
+    const auto* dmotion = find_event<DragMotionEvent>(events);
+    REQUIRE(dmotion != nullptr);
+    CHECK_EQ(dmotion->surface_id, win_b->id());
+    CHECK_EQ(dmotion->x, 40.5);
+    const auto* drop = find_event<DragDropEvent>(events);
+    REQUIRE(drop != nullptr);
+    CHECK_EQ(drop->surface_id, win_b->id());
+    CHECK_EQ(drop->x, 40.5);
+    CHECK_EQ(drop->y, 60.25);
+    CHECK_EQ(drop->mime_types.size(), size_t(2));
     seat_b->finish_drop();
 }
 

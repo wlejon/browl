@@ -70,6 +70,11 @@ struct CompositorAppState {
     uint32_t cursor_shape = 0;
     uint32_t cursor_shape_serial = 0;
     int cursor_hidden = 0;  // wl_pointer.set_cursor with a null surface
+    // wl_pointer.set_cursor with a surface (no cursor-shape: an XCursor image)
+    int cursor_surfaces_set = 0;
+    int32_t cursor_hotspot_x = 0, cursor_hotspot_y = 0;
+    int32_t cursor_buffer_width = 0;  // the shm buffer attached to that surface
+    int cursor_commits = 0;
     // zwp_text_input_v3
     bool text_input_enabled = false;
     uint32_t text_input_purpose = 0;
@@ -181,6 +186,12 @@ public:
     void send_pointer_leave();
     void send_pointer_motion(double x, double y, uint32_t time_ms = 0);
     void send_pointer_button(uint32_t button, bool pressed);
+    // Withdraw wp_cursor_shape_manager_v1 (before the client binds): a
+    // compositor without it, which gets cursors as surfaces.
+    void remove_cursor_shape();
+    // A drag offering `mimes` enters the newest window at (x, y), moves to
+    // (to_x, to_y) and is dropped there.
+    void send_drag(const std::vector<std::string>& mimes, double x, double y, double to_x, double to_y);
     // axis_source, value120 + axis on each nonzero axis, then frame.
     void send_pointer_scroll(int32_t value120_x, int32_t value120_y, double dx, double dy,
                              uint32_t source);
@@ -242,6 +253,8 @@ public:
     struct wl_global* idle_inhibit_global_ = nullptr;
     struct wl_global* screencopy_global_ = nullptr;
     struct wl_global* idle_notify_global_ = nullptr;
+    struct wl_global* cursor_shape_global_ = nullptr;
+    struct wl_resource* cursor_surface_ = nullptr;
 
     // Active resources
     struct wl_resource* output_resource_ = nullptr;

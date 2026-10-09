@@ -400,6 +400,16 @@ struct PresentationFeedbackEvent {
     bool operator==(const PresentationFeedbackEvent&) const = default;
 };
 
+/// The wl_surface.frame callback a Display::request_frame_callback named
+/// fired: the compositor says now is a good time to draw the next frame.
+struct FrameDoneEvent {
+    RequestId request = 0;
+    SurfaceId surface_id = kNoSurface;
+    uint32_t time_ms = 0;  // the callback's timestamp (ms, unspecified base)
+
+    bool operator==(const FrameDoneEvent&) const = default;
+};
+
 // --- Input (seat.h; delivered once Display::enable_input() is called) ------
 // Surface ids name surfaces browl created (Window, LayerSurface, Popup, ...);
 // kNoSurface for any other. Positions are surface-local logical px.
@@ -696,6 +706,7 @@ using ShellEvent = std::variant<
     WindowOutputsEvent,
     ActivationTokenEvent,
     PresentationFeedbackEvent,
+    FrameDoneEvent,
     PointerEnterEvent,
     PointerLeaveEvent,
     PointerMotionEvent,

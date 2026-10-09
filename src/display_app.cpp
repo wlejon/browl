@@ -44,7 +44,34 @@ struct FeedbackRequest {
     OutputId output = kNoOutput;
 };
 
+struct FrameCallbackRequest {
+    Display::AppGlobals* app = nullptr;
+    wl_callback* callback = nullptr;
+    RequestId id = 0;
+    SurfaceId surface_id = kNoSurface;
+};
+
 namespace {
+
+// --- wl_surface.frame --------------------------------------------------------
+
+static void frame_callback_handle_done(void* data, wl_callback* /*cb*/, uint32_t time_ms) {
+    auto* req = static_cast<FrameCallbackRequest*>(data);
+    if (!req || !req->app) {
+        return;
+    }
+    FrameDoneEvent ev;
+    ev.request = req->id;
+    ev.surface_id = req->surface_id;
+    ev.time_ms = time_ms;
+    Display::AppGlobals* app = req->app;
+    app->display->events().push(std::move(ev));
+    app->forget_frame_callback(req);
+}
+
+static const struct wl_callback_listener frame_callback_listener = {
+    .done = frame_callback_handle_done,
+};
 
 // --- wp_presentation ---------------------------------------------------------
 
@@ -220,6 +247,11 @@ void Display::AppGlobals::teardown() {
         delete req;
     }
     feedbacks.clear();
+    for (FrameCallbackRequest* req : frame_callbacks) {
+        wl_callback_destroy(req->callback);
+        delete req;
+    }
+    frame_callbacks.clear();
 }
 
 void Display::AppGlobals::destroy_globals() {
@@ -396,6 +428,18 @@ void Display::AppGlobals::forget_feedback(FeedbackRequest* req) {
     delete req;
 }
 
+void Display::AppGlobals::forget_frame_callback(FrameCallbackRequest* req) {
+    {
+        std::lock_guard<std::mutex> lock(requests_mutex);
+        if (frame_callbacks.erase(req) == 0) {
+            return;
+        }
+    }
+    // done is a destructor event too.
+    wl_callback_destroy(req->callback);
+    delete req;
+}
+
 // ============================================================================
 // Display
 // ============================================================================
@@ -510,6 +554,25 @@ RequestId Display::request_presentation_feedback(wl_surface* surface) {
     }
     wp_presentation_feedback_add_listener(req->feedback, &feedback_listener, req);
     app_->feedbacks.insert(req);
+    return req->id;
+}
+
+RequestId Display::request_frame_callback(wl_surface* surface) {
+    if (!surface) {
+        return 0;
+    }
+    auto* req = new FrameCallbackRequest;
+    req->app = app_.get();
+    req->id = app_->next_request_id.fetch_add(1);
+    req->surface_id = app_->surface_id(surface);
+    std::lock_guard<std::mutex> lock(app_->requests_mutex);
+    req->callback = wl_surface_frame(surface);
+    if (!req->callback) {
+        delete req;
+        return 0;
+    }
+    wl_callback_add_listener(req->callback, &frame_callback_listener, req);
+    app_->frame_callbacks.insert(req);
     return req->id;
 }
 

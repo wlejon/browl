@@ -26,6 +26,9 @@ static void surface_attach_req(struct wl_client* /*client*/, struct wl_resource*
     if (comp && !buffer && resource == comp->window_surface_) {
         ++comp->app_.null_attaches;
     }
+    if (comp && buffer && resource == comp->cursor_surface_) {
+        if (wl_shm_buffer* shm = wl_shm_buffer_get(buffer)) comp->app_.cursor_buffer_width = wl_shm_buffer_get_width(shm);
+    }
 }
 
 static void surface_damage_req(struct wl_client* /*client*/, struct wl_resource* /*resource*/,
@@ -46,6 +49,9 @@ static void surface_commit_req(struct wl_client* /*client*/, struct wl_resource*
         comp->layer_surface_committed_ = true;
         if (resource == comp->window_surface_) {
             ++comp->app_.commits;
+        }
+        if (resource == comp->cursor_surface_) {
+            ++comp->app_.cursor_commits;
         }
     }
 }
@@ -74,6 +80,9 @@ static void surface_destroyed(struct wl_resource* resource) {
     }
     if (comp && comp->surface_resource_ == resource) {
         comp->surface_resource_ = nullptr;
+    }
+    if (comp && comp->cursor_surface_ == resource) {
+        comp->cursor_surface_ = nullptr;
     }
 }
 

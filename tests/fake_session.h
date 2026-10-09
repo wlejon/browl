@@ -24,7 +24,9 @@ struct FakeSession {
     browl::test::HeadlessCompositor server;
     std::unique_ptr<browl::Display> display;
 
-    FakeSession() {
+    // cursor_shape false: the compositor offers no wp_cursor_shape_manager_v1.
+    explicit FakeSession(bool cursor_shape = true) {
+        if (!cursor_shape) server.remove_cursor_shape();
         server.start();
         const int fd = server.create_client_fd();
         if (fd < 0) {

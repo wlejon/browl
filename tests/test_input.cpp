@@ -3,7 +3,8 @@
 // text, modifiers, compose / dead keys, no text for control keys), repeat
 // info, focus, pointer events with one PointerAxisEvent per frame, the
 // cursor set on enter (cursor-shape) and hidden, touch points, and text
-// input (zwp_text_input_v3) done-batches.
+// input (zwp_text_input_v3) done-batches; and, against a compositor without
+// cursor-shape, the XCursor image on a cursor surface.
 #include "browl/browl.h"
 #include "fake_session.h"
 
@@ -288,9 +289,44 @@ void run() {
     CHECK(km->keysym(KEY_A) == uint32_t(XKB_KEY_a));
 }
 
+// A compositor without cursor-shape: the cursor is the XCursor theme's image
+// (libwayland-cursor's built-in set when no theme is installed) on a surface
+// of browl's, set on enter and replaced on a change of shape.
+void run_xcursor() {
+    bstest::FakeSession s(false);
+    REQUIRE(s.display != nullptr);
+    Display& d = *s.display;
+    auto seat = d.default_seat();
+    REQUIRE(seat != nullptr);
+    auto window = d.create_window(WindowConfig{});
+    REQUIRE(window != nullptr);
+    d.enable_input();
+    settle(d);
+
+    s.server.send_pointer_enter(3, 4);
+    settle(d);
+    auto st = s.server.app_state();
+    CHECK_EQ(st.cursor_shape_serial, 0u);  // no cursor-shape request
+    CHECK_EQ(st.cursor_surfaces_set, 1);
+    CHECK(st.cursor_buffer_width > 0);
+    CHECK(st.cursor_commits >= 1);
+    CHECK(st.cursor_hotspot_x >= 0 && st.cursor_hotspot_x < st.cursor_buffer_width);
+
+    seat->set_cursor(CursorShape::Text);
+    settle(d);
+    st = s.server.app_state();
+    CHECK_EQ(st.cursor_surfaces_set, 2);
+    CHECK(st.cursor_commits >= 2);
+
+    seat->set_cursor(CursorShape::Hidden);
+    settle(d);
+    CHECK_EQ(s.server.app_state().cursor_hidden, 1);
+}
+
 }  // namespace
 
 int main() {
     run();
+    run_xcursor();
     return bstest::finish("test_input");
 }

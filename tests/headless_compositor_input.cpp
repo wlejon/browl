@@ -38,8 +38,16 @@ void forget(T*& slot, struct wl_resource* resource) {
 // --- wl_pointer / wl_keyboard / wl_touch ---------------------------------------------
 
 void pointer_set_cursor_req(struct wl_client*, struct wl_resource* resource, uint32_t /*serial*/,
-                            struct wl_resource* surface, int32_t, int32_t) {
-    if (!surface) ++comp_of(resource)->app_.cursor_hidden;
+                            struct wl_resource* surface, int32_t hx, int32_t hy) {
+    auto* comp = comp_of(resource);
+    if (!surface) {
+        ++comp->app_.cursor_hidden;
+        return;
+    }
+    ++comp->app_.cursor_surfaces_set;
+    comp->app_.cursor_hotspot_x = hx;
+    comp->app_.cursor_hotspot_y = hy;
+    comp->cursor_surface_ = surface;
 }
 
 const struct wl_pointer_interface pointer_impl = {
@@ -442,6 +450,34 @@ void HeadlessCompositor::send_pointer_motion(double x, double y, uint32_t time_m
     wl_pointer_send_motion(pointer_resource_, time_ms, wl_fixed_from_double(x), wl_fixed_from_double(y));
     wl_pointer_send_frame(pointer_resource_);
     wl_display_flush_clients(display_);
+}
+
+void HeadlessCompositor::send_drag(const std::vector<std::string>& mimes, double x, double y, double to_x,
+                                   double to_y) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!window_surface_) return;
+    // The window's client's data device.
+    struct wl_resource* device = nullptr;
+    for (auto* d : data_devices_)
+        if (wl_resource_get_client(d) == wl_resource_get_client(window_surface_)) device = d;
+    if (!device) return;
+    // An offer with no source behind it: a receive gets an empty pipe.
+    auto* offer = wl_resource_create(wl_resource_get_client(device), &wl_data_offer_interface,
+                                     wl_resource_get_version(device), 0);
+    wl_resource_set_implementation(offer, &data_offer_impl, nullptr, nullptr);
+    wl_data_device_send_data_offer(device, offer);
+    for (const auto& m : mimes) wl_data_offer_send_offer(offer, m.c_str());
+    wl_data_device_send_enter(device, next_serial_++, window_surface_, wl_fixed_from_double(x),
+                              wl_fixed_from_double(y), offer);
+    wl_data_device_send_motion(device, 0, wl_fixed_from_double(to_x), wl_fixed_from_double(to_y));
+    wl_data_device_send_drop(device);
+    wl_display_flush_clients(display_);
+}
+
+void HeadlessCompositor::remove_cursor_shape() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (cursor_shape_global_) wl_global_destroy(cursor_shape_global_);
+    cursor_shape_global_ = nullptr;
 }
 
 void HeadlessCompositor::send_pointer_button(uint32_t button, bool pressed) {

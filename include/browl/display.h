@@ -131,6 +131,12 @@ public:
     /// vkQueuePresentKHR). The answer is a PresentationFeedbackEvent with the
     /// returned id; 0 without the protocol. Callable from any thread.
     RequestId request_presentation_feedback(wl_surface* surface);
+    /// Ask for a wl_surface.frame callback on the surface's NEXT commit (as
+    /// request_presentation_feedback: call right before the commit, or
+    /// before vkQueuePresentKHR). It is answered with a FrameDoneEvent when
+    /// the compositor wants the following frame; a surface it is not
+    /// showing may never be answered. 0 for a null surface. Any thread.
+    RequestId request_frame_callback(wl_surface* surface);
     /// The clock presentation times are on (wp_presentation.clock_id), e.g.
     /// CLOCK_MONOTONIC (1); -1 before the compositor said.
     int presentation_clock_id() const;

@@ -427,6 +427,8 @@ void Seat::Impl::handle_drag_enter(uint32_t serial, wl_surface* surface, double 
         drag_accepted_mime = accepted;
         drag_serial = serial;
         drag_surface = sid;
+        drag_x = x;
+        drag_y = y;
         drag_dropped = false;
     }
     if (offer) {
@@ -455,19 +457,30 @@ void Seat::Impl::handle_drag_leave() {
 }
 
 void Seat::Impl::handle_drag_motion(uint32_t time, double x, double y) {
-    display->events().push(DragMotionEvent{seat_id(), drag_surface, time, x, y});
+    SurfaceId sid;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        drag_x = x;
+        drag_y = y;
+        sid = drag_surface;
+    }
+    display->events().push(DragMotionEvent{seat_id(), sid, time, x, y});
 }
 
 void Seat::Impl::handle_drop() {
     std::vector<std::string> mimes;
     SurfaceId sid;
+    double x, y;
     {
         std::lock_guard<std::mutex> lock(mutex);
         drag_dropped = true;
         mimes = drag_offer_mimes;
         sid = drag_surface;
+        x = drag_x;
+        y = drag_y;
     }
-    display->events().push(DragDropEvent{seat_id(), sid, 0, 0, std::move(mimes)});
+    // Where it was dropped: the last enter or motion's position.
+    display->events().push(DragDropEvent{seat_id(), sid, x, y, std::move(mimes)});
 }
 
 void Seat::Impl::finish_drag_offer() {
