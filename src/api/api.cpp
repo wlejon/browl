@@ -20,6 +20,7 @@ namespace {
 std::mutex g_display_mu;
 std::shared_ptr<browl::Display> g_custom_display;
 std::shared_ptr<browl::Display> g_default_display;
+bool g_auto_connect = true;
 
 struct WlListener {
     uint64_t id = 0;
@@ -60,6 +61,9 @@ std::shared_ptr<browl::Display> activeDisplay() {
         }
         return g_custom_display;
     }
+    if (!g_auto_connect) {
+        return nullptr;
+    }
     if (!g_default_display) {
         std::string err;
         auto d = browl::Display::connect("", &err);
@@ -83,6 +87,19 @@ void setDisplay(std::shared_ptr<browl::Display> display) {
 
 std::shared_ptr<browl::Display> getDisplay() {
     return activeDisplay();
+}
+
+void setAutoConnect(bool enabled) {
+    std::lock_guard lock(g_display_mu);
+    g_auto_connect = enabled;
+    if (!enabled) {
+        g_default_display.reset();
+    }
+}
+
+bool autoConnect() {
+    std::lock_guard lock(g_display_mu);
+    return g_auto_connect;
 }
 
 bool available(std::string* reason) {

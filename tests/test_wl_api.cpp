@@ -79,6 +79,18 @@ void run() {
     CHECK_JS("typeof bro.wl.hasIdleNotify === 'function'");
     std::cout << "  Verified presence of all methods and properties." << std::endl;
 
+    // Verify headless / setAutoConnect(false) behavior before attaching a display
+    browl::api::setAutoConnect(false);
+    CHECK(!browl::api::autoConnect());
+    CHECK(browl::api::getDisplay() == nullptr);
+    CHECK_JS("Array.isArray(bro.wl.getOutputs()) && bro.wl.getOutputs().length === 0");
+    CHECK_JS("Array.isArray(bro.wl.getSeats()) && bro.wl.getSeats().length === 0");
+    CHECK_JS("Array.isArray(bro.wl.getToplevels()) && bro.wl.getToplevels().length === 0");
+    CHECK_JS("bro.wl.hasCompositor() === false");
+    CHECK_JS("bro.wl.hasScreencopy() === false");
+    browl::api::setAutoConnect(true);
+    CHECK(browl::api::autoConnect());
+
     // 2. Connect with in-process HeadlessCompositor via FakeSession
     bstest::FakeSession s;
     REQUIRE(s.display != nullptr);
