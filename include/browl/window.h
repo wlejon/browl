@@ -21,6 +21,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 struct wl_surface;
 struct wl_buffer;
@@ -104,6 +105,13 @@ public:
     void set_buffer_scale(int32_t scale);
     /// Which part of the surface is the window proper (xdg_surface.set_window_geometry).
     void set_window_geometry(const Rect& rect);
+    /// Where the surface takes pointer and touch input
+    /// (wl_surface.set_input_region), in surface-local logical px; pointer
+    /// input elsewhere goes to whatever lies beneath. Empty: none of it.
+    /// Applies with the next commit.
+    void set_input_region(const std::vector<Rect>& rects);
+    /// The whole surface takes input again (the default). Next commit.
+    void reset_input_region();
 
     /// Interactive move / resize, from a pointer press with `serial`.
     void start_move(Seat& seat, uint32_t serial);

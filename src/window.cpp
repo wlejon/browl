@@ -486,6 +486,21 @@ void Window::set_window_geometry(const Rect& rect) {
     }
 }
 
+void Window::set_input_region(const std::vector<Rect>& rects) {
+    if (!surface_ || !display_ || !display_->wl_compositor_ptr()) return;
+    wl_region* region = wl_compositor_create_region(display_->wl_compositor_ptr());
+    if (!region) return;
+    for (const Rect& r : rects) {
+        if (r.width > 0 && r.height > 0) wl_region_add(region, r.x, r.y, r.width, r.height);
+    }
+    wl_surface_set_input_region(surface_, region);
+    wl_region_destroy(region);  // the surface keeps a copy of its state
+}
+
+void Window::reset_input_region() {
+    if (surface_) wl_surface_set_input_region(surface_, nullptr);
+}
+
 void Window::start_move(Seat& seat, uint32_t serial) {
     if (toplevel_ && seat.wl_seat_ptr()) {
         xdg_toplevel_move(toplevel_, seat.wl_seat_ptr(), serial);
