@@ -58,7 +58,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends ninja-build pkg-config \
-            libwayland-dev libwayland-bin sway
+            libwayland-dev libwayland-bin libxkbcommon-dev sway
 
       - name: Install packages (macOS)
         if: runner.os == 'macOS'
@@ -97,7 +97,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends ninja-build pkg-config \
-            libwayland-dev libwayland-bin sway gcovr
+            libwayland-dev libwayland-bin libxkbcommon-dev sway gcovr
 
       - name: Configure
         run: cmake -S browl -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBROWL_COVERAGE=ON
@@ -121,6 +121,8 @@ jobs:
             --filter 'browl/src/' --filter 'browl/include/browl/' \
             --exclude 'browl/src/unavailable/' \
             --exclude-unreachable-branches \
+            --gcov-ignore-errors=no_working_dir_found \
+            --gcov-ignore-parse-errors=negative_hits.warn_once_per_file \
             --print-summary \
             --html-details coverage-html/index.html \
             | tee coverage-summary.txt

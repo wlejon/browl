@@ -44,7 +44,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ninja-build pkg-config libwayland-dev libwayland-bin
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config libwayland-dev libwayland-bin libxkbcommon-dev
 
       - uses: actions/checkout@v7
         with:
