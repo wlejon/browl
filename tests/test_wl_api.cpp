@@ -120,9 +120,15 @@ void run() {
     {
         CHECK_JS(
             "globalThis.__addedTitles = [];\n"
+            "globalThis.__createdTitles = [];\n"
             "globalThis.__closedIds = [];\n"
             "globalThis.__hAdded = bro.wl.on('toplevelAdded', top => {\n"
+            "    const garbage = [];\n"
+            "    for (let i = 0; i < 64; i++) garbage.push({ idx: i, pad: 'x'.repeat(32) });\n"
             "    globalThis.__addedTitles.push(top.title);\n"
+            "});\n"
+            "globalThis.__hCreated = bro.wl.on('toplevelCreated', top => {\n"
+            "    globalThis.__createdTitles.push(top.title);\n"
             "});\n"
             "globalThis.__hClosed = bro.wl.on('toplevelClosed', ev => {\n"
             "    globalThis.__closedIds.push(ev.id);\n"
@@ -143,6 +149,20 @@ void run() {
         CHECK_JS("bro.wl.getToplevels()[0].isMinimized === false");
         CHECK_JS("bro.wl.getToplevels()[0].isFullscreen === false");
         CHECK_JS("globalThis.__addedTitles.length === 1 && globalThis.__addedTitles[0] === 'Editor'");
+        CHECK_JS("globalThis.__createdTitles.length === 1 && globalThis.__createdTitles[0] === 'Editor'");
+
+        // Test HostClass handle type-branding across ToplevelHandle and LayerSurfaceHandle
+        CHECK_JS(
+            "(function() {\n"
+            "    const top = bro.wl.getToplevels()[0];\n"
+            "    const ls = bro.wl.createLayerSurface({ layer: 'top', width: 100, height: 30 });\n"
+            "    if (bro.wl.setLayerRole(top, { layer: 'overlay' }) !== false) return false;\n"
+            "    if (ls.setSize.call(top, 200, 40) !== false) return false;\n"
+            "    if (top.close.call(ls) !== false) return false;\n"
+            "    ls.close();\n"
+            "    return true;\n"
+            "})()\n"
+        );
 
         // Perform actions from JS
         CHECK_JS(
@@ -171,6 +191,7 @@ void run() {
 
         // Remove listener
         CHECK_JS("globalThis.__hAdded.remove() === true");
+        CHECK_JS("globalThis.__hCreated.remove() === true");
         CHECK_JS("bro.wl.off(globalThis.__hClosed) === true");
         std::cout << "  Foreign toplevels passed." << std::endl;
     }
@@ -258,6 +279,21 @@ void run() {
         CHECK_JS("globalThis.__capResult.format === 'XRGB8888'");
         CHECK_JS("globalThis.__capResult.pixels instanceof Uint8Array");
         CHECK_JS("globalThis.__capResult.pixels.length === 64 * 256");
+
+        // Test SHM allocation failure on 0-sized buffer rejects promise and cleans up PendingCapture
+        CHECK_JS(
+            "globalThis.__badCapError = null;\n"
+            "bro.wl.captureOutput().then(\n"
+            "    () => {},\n"
+            "    e => { globalThis.__badCapError = e; }\n"
+            ");\n"
+            "true;\n"
+        );
+        CHECK(s.display->roundtrip() >= 0);
+        s.server.send_screencopy_buffer(kFormat, 0, 0, 0);
+        CHECK(s.display->roundtrip() >= 0);
+        browl::api::tickWlAsync();
+        CHECK_JS("globalThis.__badCapError !== null");
         std::cout << "  Screencopy capture passed." << std::endl;
     }
 

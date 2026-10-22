@@ -50,29 +50,44 @@ std::string formatName(uint32_t fmt) {
 } // namespace
 
 void handleScreenCopyBufferEvent(const browl::ScreenCopyBufferEvent& e) {
-    std::lock_guard lock(g_captures_mu);
-    for (auto& cap : g_pending_captures) {
-        if (!cap->buffer_received) {
-            cap->format = e.format;
-            cap->width = e.width;
-            cap->height = e.height;
-            cap->stride = e.stride;
-            cap->buffer_received = true;
+    std::shared_ptr<PendingCapture> failed;
+    {
+        std::lock_guard lock(g_captures_mu);
+        for (auto it = g_pending_captures.begin(); it != g_pending_captures.end(); ++it) {
+            auto& cap = *it;
+            if (!cap->buffer_received) {
+                cap->format = e.format;
+                cap->width = e.width;
+                cap->height = e.height;
+                cap->stride = e.stride;
+                cap->buffer_received = true;
 
-            auto d = activeDisplay();
-            if (d && cap->frame) {
-                size_t poolSize = static_cast<size_t>(e.stride) * e.height;
-                cap->pool = d->create_shm_pool(poolSize);
-                if (cap->pool) {
-                    cap->buffer = cap->pool->allocate_buffer(e.width, e.height, e.stride, e.format);
-                    if (cap->buffer) {
-                        cap->frame->copy(cap->buffer->wl_buffer_ptr());
-                        d->flush();
+                bool copied = false;
+                auto d = activeDisplay();
+                if (d && cap->frame && e.stride > 0 && e.height > 0) {
+                    size_t poolSize = static_cast<size_t>(e.stride) * e.height;
+                    cap->pool = d->create_shm_pool(poolSize);
+                    if (cap->pool) {
+                        cap->buffer = cap->pool->allocate_buffer(e.width, e.height, e.stride, e.format);
+                        if (cap->buffer) {
+                            cap->frame->copy(cap->buffer->wl_buffer_ptr());
+                            d->flush();
+                            copied = true;
+                        }
                     }
                 }
+                if (!copied) {
+                    cap->frame.reset();
+                    failed = cap;
+                    g_pending_captures.erase(it);
+                }
+                break;
             }
-            break;
         }
+    }
+    if (failed && failed->promise) {
+        ev::rejectPromise(failed->promise->get(),
+                          makeError("Failed to allocate SHM buffer for screencopy"));
     }
 }
 
@@ -105,6 +120,9 @@ void handleScreenCopyReadyEvent(const browl::ScreenCopyReadyEvent& /*e*/) {
         res.set("pixels", viewP.get());
 
         ev::resolvePromise(resolved->promise->get(), res.build());
+    } else if (resolved && resolved->promise) {
+        ev::rejectPromise(resolved->promise->get(),
+                          makeError("Screencopy completed without a valid SHM buffer"));
     }
 }
 

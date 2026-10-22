@@ -205,17 +205,17 @@ void dispatchWlShellEvent(const browl::ShellEvent& ev) {
     std::visit([](auto&& e) {
         using T = std::decay_t<decltype(e)>;
         if constexpr (std::is_same_v<T, browl::ToplevelCreatedEvent>) {
-            Value payload = toplevelSnapshotToJs(e.toplevel);
-            fireListeners("toplevelAdded", payload);
-            fireListeners("toplevelCreated", payload);
+            ev::Persistent payload(toplevelSnapshotToJs(e.toplevel));
+            fireListeners("toplevelAdded", payload.get());
+            fireListeners("toplevelCreated", payload.get());
         } else if constexpr (std::is_same_v<T, browl::ToplevelClosedEvent>) {
             ObjectBuilder b;
             b.set("id", static_cast<double>(e.id));
             fireListeners("toplevelClosed", b.build());
         } else if constexpr (std::is_same_v<T, browl::ToplevelDoneEvent>) {
-            Value payload = toplevelSnapshotToJs(e.snapshot);
-            fireListeners("toplevelChanged", payload);
-            fireListeners("toplevelDone", payload);
+            ev::Persistent payload(toplevelSnapshotToJs(e.snapshot));
+            fireListeners("toplevelChanged", payload.get());
+            fireListeners("toplevelDone", payload.get());
         } else if constexpr (std::is_same_v<T, browl::LayerConfigureEvent>) {
             ObjectBuilder b;
             b.set("surfaceId", static_cast<double>(e.surface_id));

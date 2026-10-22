@@ -7,6 +7,12 @@ namespace browl::api {
 
 namespace {
 
+struct BrandedHandle {
+    const HostClass* cls = nullptr;
+    void* data = nullptr;
+    ev::HandleDestructor dtor = nullptr;
+};
+
 // One table per thread, keyed by the class object: the constructor and
 // prototype a class holds are Persistents of the thread that installed it,
 // so a second thread's realm gets a second, independent pair.
@@ -41,6 +47,11 @@ void HostClass::install(const char* name, uint32_t arity, ev::NativeFn body,
     }
 
     Slots& s = slots();
+    delete s.ctor;
+    delete s.proto;
+    s.ctor = nullptr;
+    s.proto = nullptr;
+
     ev::Persistent ctor(ev::makeFunction(std::move(ctorBody), arity, name));
     s.ctor = new ev::Persistent(ctor.get());
 
@@ -54,7 +65,8 @@ void HostClass::install(const char* name, uint32_t arity, ev::NativeFn body,
     ev::registerGlobal(name, s.ctor->get());
     ev::GlobalValue gt = ev::globalValue("globalThis");
     if (gt.found && !gt.value.isUndefined() && ev::isObject(gt.value)) {
-        ev::setProperty(gt.value, name, s.ctor->get());
+        ev::Persistent gtP(gt.value);
+        ev::setProperty(gtP.get(), name, s.ctor->get());
     }
 }
 
@@ -64,11 +76,13 @@ void HostClass::alias(const char* name) const {
     ev::registerGlobal(name, s->ctor->get());
     ev::GlobalValue gt = ev::globalValue("globalThis");
     if (gt.found && !gt.value.isUndefined() && ev::isObject(gt.value)) {
-        ev::setProperty(gt.value, name, s->ctor->get());
+        ev::Persistent gtP(gt.value);
+        ev::setProperty(gtP.get(), name, s->ctor->get());
     }
 }
 
 void HostClass::inherit(const HostClass& base) const {
+    base_ = &base;
     const Slots* s = slotsIfAny();
     const Slots* b = base.slotsIfAny();
     if (!s || !s->proto || !b || !b->proto) return;
@@ -82,9 +96,24 @@ void HostClass::inherit(const HostClass& base) const {
 }
 
 Value HostClass::make(void* data, ev::HandleDestructor dtor, ev::Finalize when) const {
+    auto* branded = new BrandedHandle{this, data, dtor};
+    auto wrapperDtor = +[](void* raw) {
+        auto* b = static_cast<BrandedHandle*>(raw);
+        if (b->dtor) b->dtor(b->data);
+        delete b;
+    };
     const Slots* s = slotsIfAny();
-    if (!s || !s->proto) return ev::makeHandle(data, dtor, when);
-    return ev::makeHandle(data, dtor, when, s->proto->get());
+    if (!s || !s->proto) return ev::makeHandle(branded, wrapperDtor, when);
+    return ev::makeHandle(branded, wrapperDtor, when, s->proto->get());
+}
+
+void* HostClass::unwrap(Value val) const {
+    auto* branded = static_cast<BrandedHandle*>(ev::handleData(val));
+    if (!branded) return nullptr;
+    for (const HostClass* c = branded->cls; c != nullptr; c = c->base_) {
+        if (c == this) return branded->data;
+    }
+    return nullptr;
 }
 
 void HostClass::setStatic(const char* name, Value v) const {

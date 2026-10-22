@@ -60,10 +60,11 @@ browl::Layer parseLayer(std::string_view s) {
 browl::Margins parseMargins(Value obj) {
     browl::Margins m;
     if (!ev::isObject(obj)) return m;
-    m.top = ArgReader::getPropInt(obj, "top", 0);
-    m.right = ArgReader::getPropInt(obj, "right", 0);
-    m.bottom = ArgReader::getPropInt(obj, "bottom", 0);
-    m.left = ArgReader::getPropInt(obj, "left", 0);
+    ev::Persistent objP(obj);
+    m.top = ArgReader::getPropInt(objP.get(), "top", 0);
+    m.right = ArgReader::getPropInt(objP.get(), "right", 0);
+    m.bottom = ArgReader::getPropInt(objP.get(), "bottom", 0);
+    m.left = ArgReader::getPropInt(objP.get(), "left", 0);
     return m;
 }
 
@@ -205,40 +206,41 @@ Value createLayerSurfaceHandle(std::shared_ptr<browl::LayerSurface> layer) {
 browl::LayerSurfaceConfig parseLayerConfig(Value opts) {
     browl::LayerSurfaceConfig cfg;
     if (!ev::isObject(opts)) return cfg;
+    ev::Persistent optsP(opts);
 
-    cfg.name_space = ArgReader::getPropString(opts, "namespace", "browl");
-    cfg.layer = parseLayer(ArgReader::getPropString(opts, "layer", "top"));
+    cfg.name_space = ArgReader::getPropString(optsP.get(), "namespace", "browl");
+    cfg.layer = parseLayer(ArgReader::getPropString(optsP.get(), "layer", "top"));
 
-    Value anchorVal = ArgReader::getProp(opts, "anchor");
-    if (!ev::isUndefined(anchorVal)) {
-        cfg.anchor = parseAnchor(anchorVal);
+    ev::Persistent anchorVal(ArgReader::getProp(optsP.get(), "anchor"));
+    if (!ev::isUndefined(anchorVal.get())) {
+        cfg.anchor = parseAnchor(anchorVal.get());
     }
 
-    Value marginVal = ArgReader::getProp(opts, "margin");
-    if (!ev::isUndefined(marginVal)) {
-        cfg.margins = parseMargins(marginVal);
+    ev::Persistent marginVal(ArgReader::getProp(optsP.get(), "margin"));
+    if (!ev::isUndefined(marginVal.get())) {
+        cfg.margins = parseMargins(marginVal.get());
     }
 
-    int32_t width = ArgReader::getPropInt(opts, "width", 0);
-    int32_t height = ArgReader::getPropInt(opts, "height", 0);
+    int32_t width = ArgReader::getPropInt(optsP.get(), "width", 0);
+    int32_t height = ArgReader::getPropInt(optsP.get(), "height", 0);
     cfg.size = browl::Size{width, height};
 
-    if (ArgReader::hasProp(opts, "exclusiveZone")) {
-        cfg.exclusive_zone = ArgReader::getPropInt(opts, "exclusiveZone", 0);
-    } else if (ArgReader::hasProp(opts, "exclusive_zone")) {
-        cfg.exclusive_zone = ArgReader::getPropInt(opts, "exclusive_zone", 0);
-    } else if (ArgReader::hasProp(opts, "exclusive")) {
-        Value ex = ArgReader::getProp(opts, "exclusive");
-        if (ev::isNumber(ex)) {
-            cfg.exclusive_zone = static_cast<int32_t>(ev::toDouble(ex));
-        } else if (ev::isBool(ex)) {
-            cfg.exclusive_zone = ev::toBool(ex) ? (height > 0 ? height : 30) : 0;
+    if (ArgReader::hasProp(optsP.get(), "exclusiveZone")) {
+        cfg.exclusive_zone = ArgReader::getPropInt(optsP.get(), "exclusiveZone", 0);
+    } else if (ArgReader::hasProp(optsP.get(), "exclusive_zone")) {
+        cfg.exclusive_zone = ArgReader::getPropInt(optsP.get(), "exclusive_zone", 0);
+    } else if (ArgReader::hasProp(optsP.get(), "exclusive")) {
+        ev::Persistent ex(ArgReader::getProp(optsP.get(), "exclusive"));
+        if (ev::isNumber(ex.get())) {
+            cfg.exclusive_zone = static_cast<int32_t>(ev::toDouble(ex.get()));
+        } else if (ev::isBool(ex.get())) {
+            cfg.exclusive_zone = ev::toBool(ex.get()) ? (height > 0 ? height : 30) : 0;
         }
     }
 
     auto d = activeDisplay();
-    if (d && ArgReader::hasProp(opts, "output")) {
-        uint32_t outId = ArgReader::getPropUint(opts, "output", 0);
+    if (d && ArgReader::hasProp(optsP.get(), "output")) {
+        uint32_t outId = ArgReader::getPropUint(optsP.get(), "output", 0);
         auto out = d->output_by_id(outId);
         if (out) cfg.output = out.get();
     }
@@ -272,13 +274,13 @@ void installLayersOnto(Value wlObj) {
         auto d = activeDisplay();
         if (!d) return ev::fromBool(false);
 
-        Value win = r.get(0);
-        Value opts = r.get(1);
+        ev::Persistent winP(r.get(0));
+        ev::Persistent optsP(r.get(1));
 
         // Check if `win` is already a LayerSurface handle
-        auto existing = unwrapLayerSurface(win);
+        auto existing = unwrapLayerSurface(winP.get());
         if (existing) {
-            browl::LayerSurfaceConfig cfg = parseLayerConfig(opts);
+            browl::LayerSurfaceConfig cfg = parseLayerConfig(optsP.get());
             existing->set_layer(cfg.layer);
             if (cfg.anchor != browl::Anchor::None) existing->set_anchor(cfg.anchor);
             existing->set_margin(cfg.margins);
@@ -292,12 +294,17 @@ void installLayersOnto(Value wlObj) {
             return ev::fromBool(true);
         }
 
+        // Reject foreign HostClass handles passed directly as `win`
+        if (ev::handleData(winP.get()) != nullptr) {
+            return ev::fromBool(false);
+        }
+
         // Check if `win` is an object with an attached `_layerSurface`
-        if (ev::isObject(win)) {
-            Value attached = ArgReader::getProp(win, "_layerSurface");
-            auto fromAttached = unwrapLayerSurface(attached);
+        if (ev::isObject(winP.get())) {
+            ev::Persistent attachedP(ArgReader::getProp(winP.get(), "_layerSurface"));
+            auto fromAttached = unwrapLayerSurface(attachedP.get());
             if (fromAttached) {
-                browl::LayerSurfaceConfig cfg = parseLayerConfig(opts);
+                browl::LayerSurfaceConfig cfg = parseLayerConfig(optsP.get());
                 fromAttached->set_layer(cfg.layer);
                 if (cfg.anchor != browl::Anchor::None) fromAttached->set_anchor(cfg.anchor);
                 fromAttached->set_margin(cfg.margins);
@@ -313,7 +320,7 @@ void installLayersOnto(Value wlObj) {
         }
 
         // Otherwise create a new layer surface
-        browl::LayerSurfaceConfig cfg = parseLayerConfig(opts);
+        browl::LayerSurfaceConfig cfg = parseLayerConfig(optsP.get());
         auto surf = d->create_layer_surface(cfg);
         if (!surf) return ev::fromBool(false);
 
@@ -323,8 +330,7 @@ void installLayersOnto(Value wlObj) {
         std::shared_ptr<browl::LayerSurface> shared(std::move(surf));
         ev::Persistent handleP(createLayerSurfaceHandle(shared));
 
-        if (ev::isObject(win)) {
-            ev::Persistent winP(win);
+        if (ev::isObject(winP.get())) {
             winP.set(ev::setProperty(winP.get(), "_layerSurface", handleP.get()));
         }
 
