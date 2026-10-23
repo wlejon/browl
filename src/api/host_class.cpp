@@ -1,17 +1,41 @@
 #include "host_class.h"
 #include "object_builder.h"
 
+#include <mutex>
 #include <unordered_map>
 
 namespace browl::api {
 
 namespace {
 
-struct BrandedHandle {
+struct Brand {
     const HostClass* cls = nullptr;
-    void* data = nullptr;
     ev::HandleDestructor dtor = nullptr;
 };
+
+std::mutex& brandMutex() {
+    static std::mutex m;
+    return m;
+}
+
+std::unordered_map<const void*, Brand>& brands() {
+    static auto* m = new std::unordered_map<const void*, Brand>();
+    return *m;
+}
+
+void brandedDestroy(void* data) {
+    ev::HandleDestructor dtor = nullptr;
+    {
+        std::lock_guard<std::mutex> lk(brandMutex());
+        auto& m = brands();
+        auto it = m.find(data);
+        if (it != m.end()) {
+            dtor = it->second.dtor;
+            m.erase(it);
+        }
+    }
+    if (dtor) dtor(data);
+}
 
 // One table per thread, keyed by the class object: the constructor and
 // prototype a class holds are Persistents of the thread that installed it,
@@ -96,22 +120,28 @@ void HostClass::inherit(const HostClass& base) const {
 }
 
 Value HostClass::make(void* data, ev::HandleDestructor dtor, ev::Finalize when) const {
-    auto* branded = new BrandedHandle{this, data, dtor};
-    auto wrapperDtor = +[](void* raw) {
-        auto* b = static_cast<BrandedHandle*>(raw);
-        if (b->dtor) b->dtor(b->data);
-        delete b;
-    };
+    if (data) {
+        std::lock_guard<std::mutex> lk(brandMutex());
+        brands()[data] = Brand{this, dtor};
+    }
     const Slots* s = slotsIfAny();
-    if (!s || !s->proto) return ev::makeHandle(branded, wrapperDtor, when);
-    return ev::makeHandle(branded, wrapperDtor, when, s->proto->get());
+    if (!s || !s->proto) return ev::makeHandle(data, data ? brandedDestroy : dtor, when);
+    return ev::makeHandle(data, data ? brandedDestroy : dtor, when, s->proto->get());
 }
 
 void* HostClass::unwrap(Value val) const {
-    auto* branded = static_cast<BrandedHandle*>(ev::handleData(val));
-    if (!branded) return nullptr;
-    for (const HostClass* c = branded->cls; c != nullptr; c = c->base_) {
-        if (c == this) return branded->data;
+    void* data = ev::handleData(val);
+    if (!data) return nullptr;
+    const HostClass* cls = nullptr;
+    {
+        std::lock_guard<std::mutex> lk(brandMutex());
+        auto& m = brands();
+        auto it = m.find(data);
+        if (it == m.end()) return nullptr;
+        cls = it->second.cls;
+    }
+    for (const HostClass* c = cls; c != nullptr; c = c->base_) {
+        if (c == this) return data;
     }
     return nullptr;
 }
@@ -119,7 +149,8 @@ void* HostClass::unwrap(Value val) const {
 void HostClass::setStatic(const char* name, Value v) const {
     const Slots* s = slotsIfAny();
     if (!s || !s->ctor) return;
-    s->ctor->set(ev::setProperty(s->ctor->get(), name, v));
+    ev::Persistent valP(v);
+    s->ctor->set(ev::setProperty(s->ctor->get(), name, valP.get()));
 }
 
 Value HostClass::prototype() const {
