@@ -1,6 +1,5 @@
 add_library(browl_api STATIC
     api.cpp
-    host_class.cpp
     native_outputs.cpp
     native_toplevel.cpp
     native_layers.cpp
