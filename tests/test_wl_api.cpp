@@ -202,6 +202,7 @@ void run() {
         CHECK_JS(
             "(function() {\n"
             "    const win = {};\n"
+            "    globalThis.__layerWin = win;\n"
             "    const ok = bro.wl.setLayerRole(win, {\n"
             "        layer: 'top',\n"
             "        anchor: ['top', 'left', 'right'],\n"
@@ -218,6 +219,7 @@ void run() {
         s.server.configure_layer_surface(1920, 48);
         CHECK(s.display->roundtrip() >= 0);
         browl::api::tickWlAsync();
+        CHECK_JS("globalThis.__layerWin = null; true;");
 
         // Direct createLayerSurface test
         CHECK_JS(

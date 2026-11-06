@@ -95,10 +95,12 @@ const struct wl_seat_interface seat_impl = {
     .release = destroy_req,
 };
 
+void seat_destroyed(struct wl_resource* r) { forget(comp_of(r)->seat_resource_, r); }
+
 void bind_seat(struct wl_client* client, void* data, uint32_t version, uint32_t id) {
     auto* comp = static_cast<HeadlessCompositor*>(data);
     auto* res = wl_resource_create(client, &wl_seat_interface, static_cast<int>(version), id);
-    wl_resource_set_implementation(res, &seat_impl, data, nullptr);
+    wl_resource_set_implementation(res, &seat_impl, data, seat_destroyed);
     comp->seat_resource_ = res;
     wl_seat_send_capabilities(res, WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD);
     if (version >= 2) {

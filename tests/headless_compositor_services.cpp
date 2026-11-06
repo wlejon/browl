@@ -37,6 +37,13 @@ static void session_lock_destroy_req(struct wl_client* /*client*/, struct wl_res
     wl_resource_destroy(resource);
 }
 
+static void lock_surface_destroyed(struct wl_resource* resource) {
+    auto* comp = static_cast<HeadlessCompositor*>(wl_resource_get_user_data(resource));
+    if (comp && comp->lock_surface_resource_ == resource) {
+        comp->lock_surface_resource_ = nullptr;
+    }
+}
+
 static void session_lock_get_lock_surface_req(struct wl_client* client, struct wl_resource* resource,
                                               uint32_t id, struct wl_resource* /*surface*/,
                                               struct wl_resource* /*output*/) {
@@ -44,7 +51,7 @@ static void session_lock_get_lock_surface_req(struct wl_client* client, struct w
     struct wl_resource* res =
         wl_resource_create(client, &ext_session_lock_surface_v1_interface,
                            wl_resource_get_version(resource), id);
-    wl_resource_set_implementation(res, &lock_surface_impl, comp, nullptr);
+    wl_resource_set_implementation(res, &lock_surface_impl, comp, lock_surface_destroyed);
     if (comp) {
         comp->lock_surface_resource_ = res;
     }
@@ -68,13 +75,20 @@ static void session_lock_manager_destroy_req(struct wl_client* /*client*/, struc
     wl_resource_destroy(resource);
 }
 
+static void session_lock_destroyed(struct wl_resource* resource) {
+    auto* comp = static_cast<HeadlessCompositor*>(wl_resource_get_user_data(resource));
+    if (comp && comp->session_lock_resource_ == resource) {
+        comp->session_lock_resource_ = nullptr;
+    }
+}
+
 static void session_lock_manager_lock_req(struct wl_client* client, struct wl_resource* resource,
                                           uint32_t id) {
     auto* comp = static_cast<HeadlessCompositor*>(wl_resource_get_user_data(resource));
     struct wl_resource* res =
         wl_resource_create(client, &ext_session_lock_v1_interface,
                            wl_resource_get_version(resource), id);
-    wl_resource_set_implementation(res, &session_lock_impl, comp, nullptr);
+    wl_resource_set_implementation(res, &session_lock_impl, comp, session_lock_destroyed);
     if (comp) {
         comp->session_lock_resource_ = res;
     }
@@ -164,6 +178,13 @@ static const struct zwlr_screencopy_frame_v1_interface screencopy_frame_impl = {
     .copy_with_damage = screencopy_frame_copy_with_damage_req,
 };
 
+static void screencopy_frame_destroyed(struct wl_resource* resource) {
+    auto* comp = static_cast<HeadlessCompositor*>(wl_resource_get_user_data(resource));
+    if (comp && comp->screencopy_frame_resource_ == resource) {
+        comp->screencopy_frame_resource_ = nullptr;
+    }
+}
+
 static void screencopy_manager_capture_output(struct wl_client* client, struct wl_resource* resource,
                                               uint32_t id, int32_t /*overlay_cursor*/,
                                               struct wl_resource* /*output*/) {
@@ -171,7 +192,7 @@ static void screencopy_manager_capture_output(struct wl_client* client, struct w
     struct wl_resource* res =
         wl_resource_create(client, &zwlr_screencopy_frame_v1_interface,
                            wl_resource_get_version(resource), id);
-    wl_resource_set_implementation(res, &screencopy_frame_impl, comp, nullptr);
+    wl_resource_set_implementation(res, &screencopy_frame_impl, comp, screencopy_frame_destroyed);
     if (comp) {
         comp->screencopy_frame_resource_ = res;
     }
@@ -185,7 +206,7 @@ static void screencopy_manager_capture_output_region(struct wl_client* client, s
     struct wl_resource* res =
         wl_resource_create(client, &zwlr_screencopy_frame_v1_interface,
                            wl_resource_get_version(resource), id);
-    wl_resource_set_implementation(res, &screencopy_frame_impl, comp, nullptr);
+    wl_resource_set_implementation(res, &screencopy_frame_impl, comp, screencopy_frame_destroyed);
     if (comp) {
         comp->screencopy_frame_resource_ = res;
     }
@@ -223,6 +244,13 @@ static void idle_notifier_destroy_req(struct wl_client* /*client*/, struct wl_re
     wl_resource_destroy(resource);
 }
 
+static void idle_notification_destroyed(struct wl_resource* resource) {
+    auto* comp = static_cast<HeadlessCompositor*>(wl_resource_get_user_data(resource));
+    if (comp && comp->idle_notification_resource_ == resource) {
+        comp->idle_notification_resource_ = nullptr;
+    }
+}
+
 static void idle_notifier_get_idle_notification_req(struct wl_client* client, struct wl_resource* resource,
                                                     uint32_t id, uint32_t /*timeout*/,
                                                     struct wl_resource* /*seat*/) {
@@ -230,7 +258,7 @@ static void idle_notifier_get_idle_notification_req(struct wl_client* client, st
     struct wl_resource* res =
         wl_resource_create(client, &ext_idle_notification_v1_interface,
                            wl_resource_get_version(resource), id);
-    wl_resource_set_implementation(res, &idle_notification_impl, comp, nullptr);
+    wl_resource_set_implementation(res, &idle_notification_impl, comp, idle_notification_destroyed);
     if (comp) {
         comp->idle_notification_resource_ = res;
     }

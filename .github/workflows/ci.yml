@@ -57,26 +57,55 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ninja-build pkg-config \
+          sudo apt-get install -y --no-install-recommends ninja-build ccache pkg-config \
             libwayland-dev libwayland-bin libxkbcommon-dev sway
 
       - name: Install packages (macOS)
         if: runner.os == 'macOS'
-        run: brew install ninja
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
+        run: brew install ninja ccache
+
+      - name: ccache
+        if: runner.os != 'Windows'
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ matrix.name }}
+
+      - name: MSVC developer command prompt
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: sccache (Windows)
+        if: runner.os == 'Windows'
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Configure
         env:
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
+          SCCACHE_GHA_ENABLED: "true"
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
-            cmake -S browl -B build
+            cmake -S browl -B build -G Ninja \
+              -DCMAKE_BUILD_TYPE=${{ matrix.config }} \
+              -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl \
+              -DCMAKE_C_COMPILER_LAUNCHER=sccache \
+              -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
+              -DCMAKE_POLICY_DEFAULT_CMP0141=NEW \
+              -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded
           else
-            cmake -S browl -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.config }}
+            cmake -S browl -B build -G Ninja \
+              -DCMAKE_BUILD_TYPE=${{ matrix.config }} \
+              -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+              -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           fi
 
       - name: Build
+        env:
+          SCCACHE_GHA_ENABLED: "true"
         run: cmake --build build --config ${{ matrix.config }} --parallel 4
 
       - name: Test
@@ -96,11 +125,21 @@ jobs:
       - name: Install packages
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ninja-build pkg-config \
+          sudo apt-get install -y --no-install-recommends ninja-build ccache pkg-config \
             libwayland-dev libwayland-bin libxkbcommon-dev sway gcovr
 
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: coverage
+
       - name: Configure
-        run: cmake -S browl -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBROWL_COVERAGE=ON
+        run: |
+          cmake -S browl -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DBROWL_COVERAGE=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
         run: cmake --build build --parallel 4

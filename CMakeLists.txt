@@ -28,18 +28,6 @@ endif()
 
 option(BROWL_BUILD_TESTS "Build the browl tests" ${_browl_top_level})
 
-# Coverage. Scoped to a top-level build: a consumer that add_subdirectory()s
-# browl has no business having its own build instrumented from in here.
-option(BROWL_COVERAGE "Instrument the build for gcov coverage (GCC/Clang)" OFF)
-if(BROWL_COVERAGE AND _browl_top_level)
-    if(MSVC)
-        message(FATAL_ERROR "BROWL_COVERAGE requires GCC or Clang (gcov instrumentation)")
-    endif()
-    add_compile_options(--coverage -fprofile-update=atomic -O0 -g)
-    add_link_options(--coverage)
-    message(STATUS "browl: coverage instrumentation ON (-O0)")
-endif()
-
 if(MSVC AND _browl_top_level)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
@@ -57,6 +45,39 @@ if(_browl_top_level AND CMAKE_GENERATOR MATCHES "Ninja")
     set_property(GLOBAL PROPERTY JOB_POOLS compile_jobs=${BRO_COMPILE_JOBS} link_jobs=${BRO_LINK_JOBS})
     set(CMAKE_JOB_POOL_COMPILE compile_jobs)
     set(CMAKE_JOB_POOL_LINK link_jobs)
+endif()
+
+# --- Standalone Bronze JavaScript API ---
+# On by default only when browl is the top-level project. A library that
+# consumes browl then never needs bronze for it; bro forces BROWL_ENABLE_API
+# ON itself when it wants the binding.
+#
+# The binding drives the Wayland client directly, so it exists on Linux only;
+# elsewhere the option is accepted and ignored (bro links browl on Linux only).
+option(BROWL_ENABLE_API "Build Bronze JavaScript API" ${PROJECT_IS_TOP_LEVEL})
+if(BROWL_ENABLE_API AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(STATUS "browl: not Linux, no Wayland client to bind; browl_api not built")
+    set(BROWL_ENABLE_API OFF)
+endif()
+if(BROWL_ENABLE_API)
+    # bronze (with brass, its code generator) through cmake/bro_deps.cmake: an
+    # outer project's target, else ../bronze beside the top-level project, else
+    # the head of its main, fetched at configure. Resolved before BROWL_COVERAGE
+    # so coverage builds do not instrument bronze/brass.
+    bro_dependency(bronze GITHUB wlejon/bronze TARGET bronze_runtime_shared
+                   OPTIONS BRONZE_BUILD_SHARED_RUNTIME=ON BRONZE_BUILD_TESTS=OFF)
+endif()
+
+# Coverage. Scoped to a top-level build: a consumer that add_subdirectory()s
+# browl has no business having its own build instrumented from in here.
+option(BROWL_COVERAGE "Instrument the build for gcov coverage (GCC/Clang)" OFF)
+if(BROWL_COVERAGE AND _browl_top_level)
+    if(MSVC)
+        message(FATAL_ERROR "BROWL_COVERAGE requires GCC or Clang (gcov instrumentation)")
+    endif()
+    add_compile_options(--coverage -fprofile-update=atomic -O0 -g)
+    add_link_options(--coverage)
+    message(STATUS "browl: coverage instrumentation ON (-O0)")
 endif()
 
 function(browl_warnings target)
@@ -170,25 +191,7 @@ target_include_directories(browl
 target_compile_features(browl PUBLIC cxx_std_20)
 browl_warnings(browl)
 
-# --- Standalone Bronze JavaScript API ---
-# On by default only when browl is the top-level project. A library that
-# consumes browl then never needs bronze for it; bro forces BROWL_ENABLE_API
-# ON itself when it wants the binding.
-#
-# The binding drives the Wayland client directly, so it exists on Linux only;
-# elsewhere the option is accepted and ignored (bro links browl on Linux only).
-option(BROWL_ENABLE_API "Build Bronze JavaScript API" ${PROJECT_IS_TOP_LEVEL})
-if(BROWL_ENABLE_API AND NOT BROWL_LINUX)
-    message(STATUS "browl: not Linux, no Wayland client to bind; browl_api not built")
-    set(BROWL_ENABLE_API OFF)
-endif()
 if(BROWL_ENABLE_API)
-    # bronze (with brass, its code generator) through cmake/bro_deps.cmake: an
-    # outer project's target, else ../bronze beside the top-level project, else
-    # the head of its main, fetched at configure.
-    bro_dependency(bronze GITHUB wlejon/bronze TARGET bronze_runtime_shared
-                   OPTIONS BRONZE_BUILD_SHARED_RUNTIME=ON BRONZE_BUILD_TESTS=OFF)
-
     add_subdirectory(src/api)
 endif()
 

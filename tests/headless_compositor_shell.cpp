@@ -60,6 +60,13 @@ static const struct zwlr_layer_surface_v1_interface layer_surface_impl = {
     .set_layer = layer_surface_set_layer_req,
 };
 
+static void layer_surface_destroyed(struct wl_resource* resource) {
+    auto* comp = static_cast<HeadlessCompositor*>(wl_resource_get_user_data(resource));
+    if (comp && comp->layer_surface_resource_ == resource) {
+        comp->layer_surface_resource_ = nullptr;
+    }
+}
+
 static void layer_shell_get_layer_surface(struct wl_client* client, struct wl_resource* resource,
                                           uint32_t id, struct wl_resource* /*surface*/,
                                           struct wl_resource* /*output*/, uint32_t /*layer*/,
@@ -68,7 +75,7 @@ static void layer_shell_get_layer_surface(struct wl_client* client, struct wl_re
     struct wl_resource* res =
         wl_resource_create(client, &zwlr_layer_surface_v1_interface,
                            wl_resource_get_version(resource), id);
-    wl_resource_set_implementation(res, &layer_surface_impl, comp, nullptr);
+    wl_resource_set_implementation(res, &layer_surface_impl, comp, layer_surface_destroyed);
     if (comp) {
         comp->layer_surface_resource_ = res;
     }
@@ -257,13 +264,20 @@ static void xdg_surface_get_toplevel_req(struct wl_client* client, struct wl_res
     ++comp->app_.toplevels_created;
 }
 
+static void popup_destroyed(struct wl_resource* resource) {
+    auto* comp = static_cast<HeadlessCompositor*>(wl_resource_get_user_data(resource));
+    if (comp && comp->popup_resource_ == resource) {
+        comp->popup_resource_ = nullptr;
+    }
+}
+
 static void xdg_surface_get_popup_req(struct wl_client* client, struct wl_resource* resource,
                                       uint32_t id, struct wl_resource* /*parent*/,
                                       struct wl_resource* /*positioner*/) {
     auto* comp = static_cast<HeadlessCompositor*>(wl_resource_get_user_data(resource));
     struct wl_resource* res =
         wl_resource_create(client, &xdg_popup_interface, wl_resource_get_version(resource), id);
-    wl_resource_set_implementation(res, &popup_impl, comp, nullptr);
+    wl_resource_set_implementation(res, &popup_impl, comp, popup_destroyed);
     if (comp) {
         comp->popup_resource_ = res;
     }
@@ -299,12 +313,19 @@ static void xdg_wm_base_destroy_req(struct wl_client* /*client*/, struct wl_reso
     wl_resource_destroy(resource);
 }
 
+static void positioner_destroyed(struct wl_resource* resource) {
+    auto* comp = static_cast<HeadlessCompositor*>(wl_resource_get_user_data(resource));
+    if (comp && comp->positioner_resource_ == resource) {
+        comp->positioner_resource_ = nullptr;
+    }
+}
+
 static void xdg_wm_base_create_positioner_req(struct wl_client* client, struct wl_resource* resource,
                                               uint32_t id) {
     auto* comp = static_cast<HeadlessCompositor*>(wl_resource_get_user_data(resource));
     struct wl_resource* res =
         wl_resource_create(client, &xdg_positioner_interface, wl_resource_get_version(resource), id);
-    wl_resource_set_implementation(res, &positioner_impl, comp, nullptr);
+    wl_resource_set_implementation(res, &positioner_impl, comp, positioner_destroyed);
     if (comp) {
         comp->positioner_resource_ = res;
     }
@@ -409,11 +430,25 @@ static const struct zwlr_foreign_toplevel_manager_v1_interface toplevel_manager_
     .stop = foreign_toplevel_manager_stop,
 };
 
+static void foreign_toplevel_handle_destroyed(struct wl_resource* resource) {
+    auto* top = static_cast<CompositorToplevelState*>(wl_resource_get_user_data(resource));
+    if (top && top->resource == resource) {
+        top->resource = nullptr;
+    }
+}
+
+static void toplevel_manager_destroyed(struct wl_resource* resource) {
+    auto* comp = static_cast<HeadlessCompositor*>(wl_resource_get_user_data(resource));
+    if (comp && comp->toplevel_manager_resource_ == resource) {
+        comp->toplevel_manager_resource_ = nullptr;
+    }
+}
+
 static void bind_foreign_toplevel_manager(struct wl_client* client, void* data, uint32_t version, uint32_t id) {
     auto* comp = static_cast<HeadlessCompositor*>(data);
     struct wl_resource* res =
         wl_resource_create(client, &zwlr_foreign_toplevel_manager_v1_interface, version, id);
-    wl_resource_set_implementation(res, &toplevel_manager_impl, data, nullptr);
+    wl_resource_set_implementation(res, &toplevel_manager_impl, data, toplevel_manager_destroyed);
     comp->toplevel_manager_resource_ = res;
     if (!comp->client_) {
         comp->client_ = client;
@@ -517,7 +552,8 @@ CompositorToplevelState* HeadlessCompositor::create_foreign_toplevel(const std::
     struct wl_resource* handle_res =
         wl_resource_create(target_client, &zwlr_foreign_toplevel_handle_v1_interface,
                            wl_resource_get_version(toplevel_manager_resource_), 0);
-    wl_resource_set_implementation(handle_res, &toplevel_handle_impl, top.get(), nullptr);
+    wl_resource_set_implementation(handle_res, &toplevel_handle_impl, top.get(),
+                                   foreign_toplevel_handle_destroyed);
     top->resource = handle_res;
 
     zwlr_foreign_toplevel_manager_v1_send_toplevel(toplevel_manager_resource_, handle_res);

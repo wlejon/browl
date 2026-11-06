@@ -149,10 +149,17 @@ static void bind_compositor(struct wl_client* client, void* data, uint32_t versi
 // Output Implementation
 // ============================================================================
 
+static void output_destroyed(struct wl_resource* resource) {
+    auto* comp = static_cast<HeadlessCompositor*>(wl_resource_get_user_data(resource));
+    if (comp && comp->output_resource_ == resource) {
+        comp->output_resource_ = nullptr;
+    }
+}
+
 static void bind_output(struct wl_client* client, void* data, uint32_t version, uint32_t id) {
     auto* comp = static_cast<HeadlessCompositor*>(data);
     struct wl_resource* res = wl_resource_create(client, &wl_output_interface, version, id);
-    wl_resource_set_implementation(res, nullptr, data, nullptr);
+    wl_resource_set_implementation(res, nullptr, data, output_destroyed);
     comp->output_resource_ = res;
 
     wl_output_send_geometry(res, 0, 0, 530, 300, WL_OUTPUT_SUBPIXEL_HORIZONTAL_RGB,
